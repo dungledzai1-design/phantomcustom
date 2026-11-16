@@ -26,8 +26,8 @@ TOOL_META = {
     "treozalo": {
         "name": "Treo Zalo",
         "icon": "zalo",
-        "desc": "Treo Zalo bằng IMEI + session cookie, text/ảnh/video, mention, style, TTL.",
-        "fields": ["api_key", "secret_key", "imei", "cookies", "groups", "message",
+        "desc": "Chỉ cần IMEI + session cookie là chạy. Text/ảnh/video, mention, style, TTL.",
+        "fields": ["imei", "cookies", "groups", "message",
                    "delay", "ttl", "colors", "media_type", "media_source"],
     },
     "treomess": {
@@ -45,8 +45,8 @@ TOOL_META = {
     "zalomulti": {
         "name": "Zalo Đa Năng",
         "icon": "zalo",
-        "desc": "10 chế độ: nhaytag, treongon, spamcall, treoanh, đổi tên/avatar, sticker, voice, card, join.",
-        "fields": ["api_key", "secret_key", "imei", "cookies", "mode", "groups",
+        "desc": "Chỉ cần IMEI + cookie. 10 chế độ: nhaytag, treongon, spamcall, treoanh, đổi tên/avatar, sticker, voice, card, join.",
+        "fields": ["imei", "cookies", "mode", "groups",
                    "message", "messages", "delay_min", "delay_max", "tag_multiple",
                    "tag_random", "members", "repeat_count", "image_folder",
                    "sticker_count", "join_link"],
