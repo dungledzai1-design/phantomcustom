@@ -84,8 +84,22 @@ def init_db():
                 level TEXT DEFAULT 'info',
                 created_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS announcement (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                chat_id INTEGER PRIMARY KEY,
+                username TEXT DEFAULT '',
+                created_at REAL NOT NULL
+            );
             """
         )
+        # log hành động admin giờ chỉ đi Telegram — dọn legacy feed cũ để không
+        # hiện lại toast sự kiện cũ cho admin sau mỗi lần restart
+        c.execute("DELETE FROM notifications")
 
 
 def hash_password(password: str) -> str:
@@ -248,6 +262,55 @@ def list_notifications(limit=30):
     with _lock, _conn() as c:
         rows = c.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------- Announcement (thông báo giữa màn hình) ----------------
+def set_announcement(text):
+    """Đăng thông báo mới — tự vô hiệu hoá thông báo cũ."""
+    with _lock, _conn() as c:
+        c.execute("UPDATE announcement SET active=0 WHERE active=1")
+        cur = c.execute(
+            "INSERT INTO announcement (text, created_at, active) VALUES (?,?,1)",
+            (text, time.time()),
+        )
+        row = c.execute("SELECT * FROM announcement WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+
+
+def get_announcement():
+    with _lock, _conn() as c:
+        r = c.execute("SELECT * FROM announcement WHERE active=1 ORDER BY id DESC LIMIT 1").fetchone()
+        return dict(r) if r else None
+
+
+def clear_announcement():
+    with _lock, _conn() as c:
+        c.execute("UPDATE announcement SET active=0 WHERE active=1")
+
+
+# ---------------- Bot admins (chat_id Telegram được phép điều khiển) ----------------
+def add_bot_admin(chat_id, username=""):
+    with _lock, _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO bot_admins (chat_id, username, created_at) VALUES (?,?,?)",
+            (int(chat_id), str(username or ""), time.time()),
+        )
+
+
+def list_bot_admins():
+    with _lock, _conn() as c:
+        rows = c.execute("SELECT * FROM bot_admins ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+
+def is_bot_admin(chat_id):
+    try:
+        chat_id = int(chat_id)
+    except (TypeError, ValueError):
+        return False
+    with _lock, _conn() as c:
+        r = c.execute("SELECT 1 FROM bot_admins WHERE chat_id=?", (chat_id,)).fetchone()
+        return r is not None
 
 
 def seed_admin():

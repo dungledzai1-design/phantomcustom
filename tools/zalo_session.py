@@ -129,9 +129,15 @@ def login(imei, raw_cookie):
             )
         raise ZaloSessionError(f"Cookie hết hạn hoặc sai IMEI: {msg}")
 
+    # state.login KHÔNG raise = Zalo đã chấp nhận cookie. isLoggedIn() ở một số
+    # bản zlapi gọi thêm API phụ và trả False dù session còn sống → gây báo die sai.
+    # Ưu tiên _loggedin; chỉ kết luận chết khi cả hai đều phủ nhận.
+    logged = False
     try:
-        logged = bot.isLoggedIn()
+        logged = bool(bot.isLoggedIn())
     except Exception:
+        pass
+    if not logged:
         logged = bool(getattr(state, "_loggedin", False))
     if not logged:
         raise ZaloSessionError("Cookie Zalo đã hết hạn — lấy cookie mới rồi thử lại.")

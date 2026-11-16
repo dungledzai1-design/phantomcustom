@@ -5,6 +5,7 @@ are automatically resumed so accounts keep "treo" 24/7 until the user stops.
 """
 import time
 import uuid
+import json
 import threading
 import traceback
 import database as db
@@ -56,6 +57,44 @@ class TaskContext:
                 time.sleep(0.2)
             time.sleep(min(0.2, max(0, end - time.time())))
         return not self.stop_event.is_set()
+
+    def wait_until(self, ts):
+        """Ngủ tới thời điểm tuyệt đối (epoch giây). Trả False nếu task bị dừng."""
+        while True:
+            if self.stop_event.is_set():
+                return False
+            if self.pause_event.is_set():
+                time.sleep(0.2)
+                continue
+            remain = ts - time.time()
+            if remain <= 0:
+                return True
+            time.sleep(min(0.2, remain))
+
+    def interval(self, key, default):
+        """Đọc delay từ config MỖI VÒNG (live) — sửa delay ăn ngay khi task đang chạy.
+
+        Sàn 0.5s để tránh đấm API liên tục khi user nhập 0/số âm."""
+        raw = (self.config or {}).get(key, default)
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            v = float(default)
+        return max(0.5, v)
+
+    def pace(self, next_t, delay):
+        """Lịch gửi cố định (fixed-rate): tin kế tiếp bắt đầu đúng `delay` giây
+        kể từ BẮT ĐẦU tin trước (bù thời gian gửi — không nhanh, không chậm).
+
+        Nếu tin gửi lâu hơn delay (slot đã lùi vào quá khứ) thì KHÔNG burst:
+        tin kế chờ đủ `delay` tính từ lúc gửi xong.
+
+        Trả về slot kế tiếp, hoặc None nếu task đã dừng."""
+        delay = max(0.5, float(delay or 0.5))
+        next_t = next_t + delay
+        if next_t < time.time():          # gửi vượt slot — không đuổi các slot đã lỡ
+            next_t = time.time() + delay
+        return next_t if self.wait_until(next_t) else None
 
     @property
     def stopped(self):
@@ -257,11 +296,18 @@ class TaskManager:
         rt = self.get(task_id)
         if not rt:
             return False
-        rt.config = config
+        config = config or {}
+        # MUTATE cùng dict mà runner đang giữ tham chiếu → tool đang chạy thấy
+        # cấu hình mới NGAY ở vòng lặp kế (đọc live qua ctx.interval)
+        try:
+            rt.config.clear()
+            rt.config.update(config)
+        except Exception:
+            rt.config = config
         if rt.ctx:
-            rt.ctx.config = config
-        db.update_task(task_id, config=__import__("json").dumps(config, ensure_ascii=False))
-        rt.add_log("Đã cập nhật cấu hình (cookie/token/uid/box...)")
+            rt.ctx.config = rt.config
+        db.update_task(task_id, config=json.dumps(config, ensure_ascii=False))
+        rt.add_log("Đã cập nhật cấu hình — delay/cookie/token... áp dụng NGAY, không cần restart")
         return True
 
     def stop_all_user(self, user_id):

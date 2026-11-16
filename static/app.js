@@ -122,7 +122,9 @@ const F = {
   channel: { label: "UID channel Discord", type: "text", ph: "1234567890" },
   message: { label: "Nội dung tin nhắn", type: "textarea", ph: "Nội dung spam..." },
   messages: { label: "Nhiều nội dung (mỗi dòng 1 câu)", type: "textarea", ph: "Câu 1\nCâu 2" },
-  delay: { label: "Delay (giây)", type: "number", ph: "3", def: 3 },
+  delay: { label: "Delay (giây)", type: "number", ph: "3", def: 3, hint: "Khoảng cách giữa 2 tin: tin kế bắt đầu ĐÚNG N giây sau khi tin trước bắt đầu (web tự bù thời gian gửi — không nhanh, không chậm). Sửa delay là task đang chạy áp dụng NGAY, không cần dừng." },
+  delay_min: { label: "Delay min (giây)", type: "number", ph: "2", def: 2, hint: "Khoảng cách tối thiểu giữa 2 lần gửi. Đọc lại từ cấu hình mỗi vòng — sửa là ăn ngay." },
+  delay_max: { label: "Delay max (giây)", type: "number", ph: "5", def: 5, hint: "Khoảng cách tối đa — web chọn ngẫu nhiên trong [min, max] mỗi lần gửi." },
   api_key: { label: "API Key Zalo", type: "text", ph: "api_key" },
   secret_key: { label: "Secret Key Zalo", type: "text", ph: "secret_key" },
   imei: { label: "IMEI (bắt buộc)", type: "text", ph: "b84aaf8f3e411c94", hint: "Dán IMEI của acc. Có thể để trống nếu file cookie .txt có sẵn dòng IMEI — web tự đọc." },
@@ -141,8 +143,6 @@ const F = {
     ["nhaytag", "Nhây Tag"], ["treongon", "Treo Ngôn"], ["spamcall", "Spam Call"],
     ["treoanh", "Treo Ảnh"], ["doitennhom", "Đổi Tên Nhóm"], ["doianhnhom", "Đổi Avatar Nhóm"],
     ["spamsticker", "Spam Sticker"], ["spamvoice", "Spam Voice"], ["spamcard", "Spam Danh Thiếp"], ["join", "Join Nhóm"]] },
-  delay_min: { label: "Delay min (giây)", type: "number", ph: "2", def: 2 },
-  delay_max: { label: "Delay max (giây)", type: "number", ph: "5", def: 5 },
   tag_multiple: { label: "Tag nhiều người", type: "select", options: [["false", "Không"], ["true", "Có"]] },
   tag_random: { label: "Tag ngẫu nhiên", type: "select", options: [["false", "Không"], ["true", "Có"]] },
   repeat_count: { label: "Số lần lặp", type: "number", ph: "10", def: 10 },
@@ -520,11 +520,32 @@ $("#adminUserSearch").oninput = () => {
 };
 async function adminStop(id) { try { await api(`/api/admin/tasks/${id}/stop`, { method: "POST" }); toast("Đã đóng task từ xa", "warn"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
 async function adminDel(id) { if (!confirm("Xoá task?")) return; try { await api(`/api/admin/tasks/${id}`, { method: "DELETE" }); toast("Đã xoá", "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
-$("#btnBroadcast").onclick = () => openModal("overlayBroadcast");
-$("#btnSendBroadcast").onclick = async () => {
-  const message = $("#broadcastMsg").value.trim();
-  if (!message) return toast("Nhập nội dung", "warn");
-  try { await api("/api/admin/broadcast", { method: "POST", body: JSON.stringify({ message }) }); toast("Đã phát thông báo", "success"); closeModal("overlayBroadcast"); } catch (e) { toast(e.message, "error"); }
+$("#btnBroadcast").onclick = async () => {
+  // mở form soạn thông báo giữa màn hình, nạp nội dung đang hiện (nếu có)
+  try {
+    const a = await api("/api/announcement");
+    $("#annText").value = a && a.text ? a.text : "";
+  } catch (e) { $("#annText").value = ""; }
+  openModal("overlayBroadcast");
+};
+$("#btnSendAnn").onclick = async () => {
+  const text = $("#annText").value.trim();
+  if (!text) return toast("Nhập nội dung thông báo trước đã", "warn");
+  try {
+    const row = await api("/api/admin/announcement", { method: "POST", body: JSON.stringify({ text }) });
+    toast("Đã đăng thông báo — hiện giữa màn hình cho tất cả khách", "success");
+    closeModal("overlayBroadcast");
+    showAnnouncementModal(row);
+  } catch (e) { toast(e.message, "error"); }
+};
+$("#btnClearAnn").onclick = async () => {
+  if (!confirm("Gỡ thông báo khỏi web?")) return;
+  try {
+    await api("/api/admin/announcement", { method: "DELETE" });
+    toast("Đã gỡ thông báo", "success");
+    closeModal("overlayBroadcast");
+    hideAnnouncement();
+  } catch (e) { toast(e.message, "error"); }
 };
 
 /* ---------------- websocket ---------------- */
@@ -540,14 +561,6 @@ function connectWS() {
         TASKS = d.tasks;
         if (!$("#viewDash").classList.contains("hidden")) renderTasks();
         if (!$("#viewAdmin").classList.contains("hidden") && ME && ME.is_admin) loadAdmin();
-        // notifications toast (dedupe by id)
-        (d.notifications || []).forEach((n) => {
-          if (!window.__seenNotif) window.__seenNotif = new Set();
-          if (!window.__seenNotif.has(n.id)) {
-            window.__seenNotif.add(n.id);
-            toast("📢 " + n.message, n.level === "success" ? "success" : "info");
-          }
-        });
       }
     } catch (e) {}
   };
@@ -569,7 +582,7 @@ setInterval(() => {
 function openModal(id) { $("#" + id).classList.add("open"); }
 function closeModal(id) { $("#" + id).classList.remove("open"); }
 function openRent() { openModal("overlayRent"); }
-$$(".overlay").forEach((o) => o.addEventListener("click", (e) => { if (e.target === o) o.classList.remove("open"); }));
+$$(".overlay").forEach((o) => o.addEventListener("click", (e) => { if (e.target === o && o.id !== "overlayAnn") o.classList.remove("open"); }));
 
 /* ---------------- boot ---------------- */
 async function bootUser(retry = 0) {
@@ -604,7 +617,51 @@ async function boot() {
   } else {
     show("viewLanding");
   }
+  checkAnnouncement();   // thông báo giữa màn hình — hiện cho MỌI khách kể cả chưa đăng nhập
 }
+
+/* ---------------- thông báo giữa màn hình (24h khoá đóng + tắt luôn) ---------------- */
+const ANN_OFF_KEY = "pcAnnOff", ANN_SEEN_KEY = "pcAnnSeen";
+function showAnnouncementModal(a) {
+  if (!a || !a.text) return;
+  if (localStorage.getItem(ANN_OFF_KEY) === "1") return;
+  const age = Date.now() / 1000 - (a.created_at || 0);
+  if (age >= 86400 && String(localStorage.getItem(ANN_SEEN_KEY)) === String(a.id)) return;
+  const locked = age < 86400;
+  $("#overlayAnn").dataset.annId = String(a.id || "");
+  $("#annTextShow").innerHTML = esc(a.text).replace(/\n/g, "<br>");
+  try { $("#annMeta").textContent = "Đăng lúc " + new Date((a.created_at || 0) * 1000).toLocaleString("vi-VN"); } catch (e) {}
+  const note = $("#annLockNote"), actions = $("#annActions");
+  if (locked) {
+    const remain = Math.max(0, 86400 - age);
+    const h = Math.floor(remain / 3600), m = Math.floor((remain % 3600) / 60);
+    note.textContent = `🔒 Thông báo này có thể đóng sau 24 giờ (còn ${h} giờ ${m} phút)`;
+    note.classList.remove("hidden");
+    actions.classList.add("hidden");
+  } else {
+    note.classList.add("hidden");
+    actions.classList.remove("hidden");
+  }
+  $("#overlayAnn").classList.add("open");
+}
+function hideAnnouncement() { $("#overlayAnn").classList.remove("open"); }
+async function checkAnnouncement() {
+  try {
+    const r = await fetch("/api/announcement");
+    const a = await r.json();
+    if (a && a.text) showAnnouncementModal(a);
+  } catch (e) {}
+}
+$("#btnAnnClose").onclick = () => {
+  try { localStorage.setItem(ANN_SEEN_KEY, $("#overlayAnn").dataset.annId || ""); } catch (e) {}
+  hideAnnouncement();
+};
+$("#btnAnnOff").onclick = () => {
+  if (!confirm("Tắt thông báo vĩnh viễn trên trình duyệt này?")) return;
+  try { localStorage.setItem(ANN_OFF_KEY, "1"); } catch (e) {}
+  hideAnnouncement();
+  toast("Đã tắt thông báo", "success");
+};
 
 /* ---------------- snow ---------------- */
 (function snow() {

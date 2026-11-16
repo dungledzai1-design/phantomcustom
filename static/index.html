@@ -158,7 +158,7 @@
 <main class="app container hidden" id="viewAdmin">
   <div class="section-title">
     <div><h2 class="grad-text">Admin Panel</h2><span class="sub">Quản lý toàn hệ thống</span></div>
-    <button class="btn primary" id="btnBroadcast">📢 Phát thông báo</button>
+    <button class="btn primary" id="btnBroadcast">📢 Thông báo giữa màn hình</button>
   </div>
 
   <div class="section-title"><h2 style="font-size:17px">Người dùng</h2><span class="sub" id="adminUserCount"></span>
@@ -289,14 +289,30 @@
   </div>
 </div>
 
-<!-- ================= MODAL: BROADCAST ================= -->
+<!-- ================= MODAL: THÔNG BÁO GIỮA MÀN HÌNH ================= -->
 <div class="overlay" id="overlayBroadcast">
   <div class="modal">
-    <h3 class="grad-text">Phát thông báo toàn hệ thống</h3>
-    <div class="field"><label>Nội dung</label><textarea id="broadcastMsg" placeholder="Nhập thông báo..."></textarea></div>
+    <h3 class="grad-text">📢 Thông báo giữa màn hình</h3>
+    <p class="muted" style="font-size:12px">Thông báo hiện chính giữa màn hình cho tất cả khách. Trong 24h đầu không thể đóng; sau đó khách có thể Đóng hoặc Tắt luôn.</p>
+    <div class="field"><label>Nội dung</label><textarea id="annText" placeholder="Nhập thông báo..."></textarea></div>
     <div class="modal-actions">
       <button class="btn ghost" onclick="closeModal('overlayBroadcast')">Huỷ</button>
-      <button class="btn primary" id="btnSendBroadcast">Gửi</button>
+      <button class="btn danger" id="btnClearAnn">Gỡ thông báo</button>
+      <button class="btn primary" id="btnSendAnn">Đăng thông báo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= THÔNG BÁO HIỆN GIỮA MÀN HÌNH (mọi khách) ================= -->
+<div class="overlay" id="overlayAnn" style="z-index:300">
+  <div class="modal" style="max-width:520px">
+    <h3 class="grad-text">📢 THÔNG BÁO</h3>
+    <div id="annTextShow" style="font-size:15px;line-height:1.7;margin:10px 0"></div>
+    <div class="hint" id="annMeta"></div>
+    <div class="hint" id="annLockNote" style="color:#ffb454"></div>
+    <div class="modal-actions hidden" id="annActions">
+      <button class="btn ghost" id="btnAnnOff">Tắt luôn thông báo</button>
+      <button class="btn primary" id="btnAnnClose">Đóng</button>
     </div>
   </div>
 </div>

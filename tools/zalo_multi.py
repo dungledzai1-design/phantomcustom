@@ -67,8 +67,7 @@ class ZaloMulti:
         self.groups = [g for g in (_extract_gid(x) for x in _parse_list(config.get("groups"))) if g]
         self.message = config.get("message", "")
         self.messages = _parse_list(config.get("messages")) or ([self.message] if self.message else [])
-        self.dmin = float(config.get("delay_min", 2) or 2)
-        self.dmax = float(config.get("delay_max", self.dmin) or self.dmin)
+        # delay đọc LIVE qua ctx.interval mỗi vòng — không giữ giá trị cũ lúc start
         self.tag_multiple = bool(config.get("tag_multiple", False))
         self.tag_random = bool(config.get("tag_random", False))
         self.members = _parse_list(config.get("members"))
@@ -127,14 +126,23 @@ class ZaloMulti:
                 self.ctx.log(f"Lỗi nhóm {gid}: {e}")
 
     # ---- modes ----
+    def _dmin(self):
+        return self.ctx.interval("delay_min", 2)
+
+    def _dmax(self, dmin):
+        return max(dmin, self.ctx.interval("delay_max", dmin))
+
     def _mode_nhaytag(self, gid):
         members = self._members_for(gid)
         if not members:
             self.ctx.log("Không có member để tag")
             return
         idx = 0
+        next_t = time.time()
         while not self.ctx.stopped and self.messages:
             self.ctx.check_pause()
+            dmin = self._dmin()
+            dmax = self._dmax(dmin)
             raw = random.choice(self.messages)
             try:
                 if self.tag_multiple:
@@ -172,21 +180,28 @@ class ZaloMulti:
                 self.ctx.log(f"Đã tag nhóm {gid}")
             except Exception as e:
                 self.ctx.log(f"Lỗi tag: {e}")
-            self.ctx.wait(random.uniform(self.dmin, self.dmax))
+            # fixed-rate: lần tag kế bắt đầu đúng delay giây kể từ BẮT ĐẦU lần này
+            next_t = self.ctx.pace(next_t, random.uniform(dmin, dmax))
+            if next_t is None:
+                break
 
     def _mode_treongon(self, gid):
+        next_t = time.time()
         while not self.ctx.stopped and self.message:
             self.ctx.check_pause()
+            dmin = self._dmin()
             try:
                 self.bot.setTyping(gid, ThreadType.GROUP)
-                self.ctx.wait(2)
+                self.ctx.wait(min(2.0, dmin * 0.4))
                 self.bot.send(Message(text=self.message, mention=Mention("-1", length=len(self.message), offset=0)),
                               thread_id=gid, thread_type=ThreadType.GROUP)
                 self.ctx.sent()
                 self.ctx.log(f"Treo ngôn → {gid}")
             except Exception as e:
                 self.ctx.log(f"Lỗi: {e}")
-            self.ctx.wait(self.dmin)
+            next_t = self.ctx.pace(next_t, dmin)
+            if next_t is None:
+                break
 
     def _mode_spamcall(self, gid):
         members = self._members_for(gid)
@@ -206,6 +221,7 @@ class ZaloMulti:
                     self.ctx.wait(0.5)
                 except Exception as e:
                     self.ctx.log(f"Lỗi call {uid}: {e}")
+                self.ctx.wait(0.5)  # sàn an toàn cho call, tránh lỗi gọi dồn
             if all(counts.get(u, 0) >= self.repeat for u in members):
                 self.ctx.log("Đã call đủ số lần")
                 break
@@ -216,11 +232,13 @@ class ZaloMulti:
             self.ctx.log("Không có ảnh trong thư mục")
             return
         i = 0
+        next_t = time.time()
         while not self.ctx.stopped:
             self.ctx.check_pause()
+            dmin = self._dmin()
             try:
                 self.bot.setTyping(gid, ThreadType.GROUP)
-                self.ctx.wait(2)
+                self.ctx.wait(min(2.0, dmin * 0.4))
                 self.bot.sendLocalImage(imgs[i % len(imgs)], thread_id=gid,
                                         thread_type=ThreadType.GROUP, width=828, height=1792)
                 self.ctx.sent()
@@ -228,20 +246,26 @@ class ZaloMulti:
                 self.ctx.log(f"Gửi ảnh → {gid}")
             except Exception as e:
                 self.ctx.log(f"Lỗi ảnh: {e}")
-            self.ctx.wait(self.dmin)
+            next_t = self.ctx.pace(next_t, dmin)
+            if next_t is None:
+                break
 
     def _mode_doitennhom(self, gid):
+        next_t = time.time()
         while not self.ctx.stopped and self.messages:
             for name in self.messages:
                 if self.ctx.stopped:
                     break
+                dmin = self._dmin()
                 try:
                     self.bot.changeGroupName(name.strip(), gid)
                     self.ctx.sent()
                     self.ctx.log(f"Đổi tên nhóm: {name}")
-                    self.ctx.wait(self.dmin)
                 except Exception as e:
                     self.ctx.log(f"Lỗi đổi tên: {e}")
+                next_t = self.ctx.pace(next_t, dmin)
+                if next_t is None:
+                    break
 
     def _mode_doianhnhom(self, gid):
         imgs = _images(self.image_folder)
@@ -251,34 +275,40 @@ class ZaloMulti:
         for i in range(self.repeat):
             if self.ctx.stopped:
                 break
+            dmin = self._dmin()
             try:
                 self.bot.changeGroupAvatar(groupId=gid, filePath=random.choice(imgs))
                 self.ctx.sent()
                 self.ctx.log(f"Đổi avatar nhóm {gid}")
-                self.ctx.wait(self.dmin)
             except Exception as e:
                 self.ctx.log(f"Lỗi avatar: {e}")
+            if not self.ctx.wait(dmin):
+                break
 
     def _mode_spamsticker(self, gid):
         for _ in range(self.sticker_count):
             if self.ctx.stopped:
                 break
+            dmin = self._dmin()
             try:
                 self.bot.sendSticker(3, "23339", "10425", gid, ThreadType.GROUP)
                 self.ctx.sent()
                 self.ctx.log("Gửi sticker")
-                self.ctx.wait(self.dmin)
             except Exception as e:
                 self.ctx.log(f"Lỗi sticker: {e}")
+            if not self.ctx.wait(dmin):
+                break
 
     def _mode_spamvoice(self, gid):
         if not GTTS_OK:
             self.ctx.log("Thiếu gtts")
             return
+        next_t = time.time()
         while not self.ctx.stopped and self.messages:
             for text in self.messages:
                 if self.ctx.stopped:
                     break
+                dmin = self._dmin()
                 try:
                     fn = f"voice_{int(time.time())}.mp3"
                     gTTS(text=text, lang="vi").save(fn)
@@ -289,12 +319,16 @@ class ZaloMulti:
                         os.remove(fn)
                     except Exception:
                         pass
-                    self.ctx.wait(self.dmin)
                 except Exception as e:
                     self.ctx.log(f"Lỗi voice: {e}")
+                # gTTS tạo file mất thời gian — fixed-rate bù trôi, giữ đúng delay
+                next_t = self.ctx.pace(next_t, dmin)
+                if next_t is None:
+                    break
 
     def _mode_spamcard(self, gid):
         members = self._members_for(gid)
+        next_t = time.time()
         while not self.ctx.stopped and members:
             for uid in members:
                 if self.ctx.stopped:
@@ -302,6 +336,7 @@ class ZaloMulti:
                 for phone in self.messages:
                     if self.ctx.stopped:
                         break
+                    dmin = self._dmin()
                     try:
                         info = self.bot.fetchUserInfo(uid).changed_profiles.get(uid)
                         avatar = info.get("avatar") if info else None
@@ -311,9 +346,11 @@ class ZaloMulti:
                                                   thread_id=gid, thread_type=ThreadType.GROUP)
                         self.ctx.sent()
                         self.ctx.log(f"Gửi danh thiếp {uid}")
-                        self.ctx.wait(self.dmin)
                     except Exception as e:
                         self.ctx.log(f"Lỗi card: {e}")
+                    next_t = self.ctx.pace(next_t, dmin)
+                    if next_t is None:
+                        break
 
     def _join(self):
         links = _parse_list(self.join_link)
@@ -326,9 +363,10 @@ class ZaloMulti:
                     self.bot.joinGroup(gid)
                     self.ctx.sent()
                     self.ctx.log(f"Join nhóm {gid}")
-                    self.ctx.wait(self.dmin)
             except Exception as e:
                 self.ctx.log(f"Lỗi join: {e}")
+            if not self.ctx.wait(self._dmin()):
+                break
 
 
 def run(config, ctx):

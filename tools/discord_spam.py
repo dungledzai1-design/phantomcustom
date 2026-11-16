@@ -57,7 +57,6 @@ def run_treodis(config, ctx):
     tokens = _parse_list(config.get("tokens"))
     channels = _parse_list(config.get("channels"))
     message = config.get("message", "")
-    delay = float(config.get("delay", 5) or 5)
     if not tokens or not channels or not message:
         ctx.log("Thiếu token / channel / nội dung")
         return
@@ -73,7 +72,9 @@ def run_treodis(config, ctx):
     if not valid:
         ctx.log("Không có token hợp lệ")
         return
+    ctx.log(f"Treo Discord: {len(valid)} token × {len(channels)} channel — delay = giây giữa các tin, áp dụng ngay khi sửa")
 
+    next_t = time.time()
     while not ctx.stopped:
         ctx.check_pause()
         for t in valid:
@@ -82,9 +83,13 @@ def run_treodis(config, ctx):
             for ch in channels:
                 if ctx.stopped:
                     break
+                # delay đọc LIVE mỗi tin — sửa config là ăn ngay
+                delay = ctx.interval("delay", 5)
                 _send(t, ch, message, ctx)
-        if not ctx.wait(delay):
-            break
+                # fixed-rate: tin kế bắt đầu đúng `delay` giây kể từ BẮT ĐẦU tin này
+                next_t = ctx.pace(next_t, delay)
+                if next_t is None:
+                    break
 
 
 def run_nhaydiscord(config, ctx):
@@ -92,7 +97,6 @@ def run_nhaydiscord(config, ctx):
     token = str(config.get("token", "")).strip()
     channel = str(config.get("channel", "")).strip()
     message = config.get("message", "")
-    delay = float(config.get("delay", 2) or 2)
     if not token or not channel or not message:
         ctx.log("Thiếu token / UID channel / nội dung")
         return
@@ -100,9 +104,14 @@ def run_nhaydiscord(config, ctx):
     if not name:
         ctx.log("Token không đăng nhập được")
         return
-    ctx.log(f"Nhây Discord bằng {name} vào channel {channel}")
+    ctx.log(f"Nhây Discord bằng {name} vào channel {channel} — delay = giây giữa các tin, áp dụng ngay khi sửa")
+    next_t = time.time()
     while not ctx.stopped:
         ctx.check_pause()
+        # delay đọc LIVE mỗi tin — sửa config là ăn ngay
+        delay = ctx.interval("delay", 2)
         _send(token, channel, message, ctx)
-        if not ctx.wait(delay):
+        # fixed-rate: tin kế bắt đầu đúng `delay` giây kể từ BẮT ĐẦU tin này
+        next_t = ctx.pace(next_t, delay)
+        if next_t is None:
             break

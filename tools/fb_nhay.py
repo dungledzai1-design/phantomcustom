@@ -158,7 +158,6 @@ def run(config, ctx):
     cookie = str(config.get("cookie", "")).strip()
     thread = str(config.get("thread", "")).strip()
     message = config.get("message", "")
-    delay = float(config.get("delay", 3) or 3)
     use_typing = bool(config.get("typing", True))
     members = _parse_members(config.get("members"))
     if not cookie or not thread or not message:
@@ -173,13 +172,16 @@ def run(config, ctx):
             ctx.log("Đã kết nối MQTT (fake typing)")
         else:
             ctx.log("Không kết nối được MQTT, vẫn gửi tin bình thường")
-    ctx.log(f"Nhây box {thread}, {len(members)} member tag")
+    ctx.log(f"Nhây box {thread}, {len(members)} member tag — delay = giây giữa các lần nhây, áp dụng ngay khi sửa")
+    next_t = time.time()
     while not ctx.stopped:
         ctx.check_pause()
+        # delay đọc LIVE mỗi vòng — sửa config là ăn ngay
+        delay = ctx.interval("delay", 3)
         try:
             if use_typing:
                 bot.typing(thread, True)
-                if not ctx.wait(random.uniform(1.5, 3)):
+                if not ctx.wait(min(random.uniform(1.5, 3), delay * 0.5)):
                     break
             ok = bot.send_mention(thread, message, members)
             if ok:
@@ -191,6 +193,8 @@ def run(config, ctx):
                 bot.typing(thread, False)
         except Exception as e:
             ctx.log(f"Lỗi: {e}")
-        if not ctx.wait(delay):
+        # fixed-rate: lần nhây kế bắt đầu đúng `delay` giây kể từ BẮT ĐẦU lần này
+        next_t = ctx.pace(next_t, delay)
+        if next_t is None:
             break
     bot.close()

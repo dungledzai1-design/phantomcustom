@@ -280,14 +280,34 @@ def _zalo_login(imei, cookie):
     return zalo_login(imei, cookie)
 
 
+# Lỗi MẠNG/ hạ tầng — cookie vẫn sống, tuyệt đối KHÔNG kết luận die
+_ZALO_TRANSIENT = ("timeout", "timed out", "connection", "network", "max retries",
+                   "reset", "broken pipe", "eof occurred", "ssl", "pool", "502", "503",
+                   "504", "temporarily", "getaddrinfo", "name or service not known",
+                   "refused", "read error", "handshake")
+# Zalo TỪ CHỐI phiên đăng nhập thật sự → mới là die
+_ZALO_DIE = ("từ chối đăng nhập", "cookie sai định dạng", "đã bị đăng xuất",
+             "cookie hết hạn", "hết hạn", "sai imei", "401", "403", "invalid",
+             "unauthor", "không hợp lệ")
+
+
+def _classify_zalo_error(err):
+    """Trả về 'die' chỉ khi Zalo rõ ràng từ chối phiên; lỗi mạng/tạm thời → 'unknown'."""
+    low = (err or "").lower()
+    if any(k in low for k in _ZALO_TRANSIENT):
+        return "unknown"
+    if any(k in low for k in _ZALO_DIE):
+        return "die"
+    return "unknown"
+
+
 def check_zalo(imei, cookie):
     imei = (imei or "").strip()
     if not imei:
         return {"input": f"{imei}|{str(cookie)[:40]}", "status": "die", "name": "", "id": "",
                 "note": "Thiếu IMEI", "type": "zalo"}
-    box = {}
 
-    def _work():
+    def _work(box):
         try:
             bot = _zalo_login(imei, cookie)
             from .zalo_session import account_info
@@ -299,23 +319,30 @@ def check_zalo(imei, cookie):
         except Exception as e:
             box["err"] = f"{type(e).__name__}: {e}"
 
-    t = threading.Thread(target=_work, daemon=True)
-    t.start()
-    t.join(75)
-    if t.is_alive():
-        return {"input": f"{imei}|...", "status": "unknown", "name": "", "id": imei,
-                "note": "Zalo không phản hồi (timeout 75s)", "type": "zalo"}
-    if box.get("ok"):
-        note = box.get("phone") or "Session còn sống"
-        return {"input": f"{imei}|...", "status": "live", "name": box.get("name", ""),
-                "id": box.get("id", ""), "note": note, "type": "zalo"}
-    err = box.get("err", "Không đăng nhập được")
-    low = err.lower()
-    die_markers = ("cookie", "login", "session", "401", "403", "invalid", "expired",
-                   "không hợp lệ", "unauthor")
-    status = "die" if any(k in low for k in die_markers) else "unknown"
-    return {"input": f"{imei}|...", "status": status, "name": "", "id": imei,
-            "note": err[:160], "type": "zalo"}
+    for attempt in range(2):
+        box = {}
+        t = threading.Thread(target=_work, args=(box,), daemon=True)
+        t.start()
+        t.join(75)
+        if t.is_alive():
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return {"input": f"{imei}|...", "status": "unknown", "name": "", "id": imei,
+                    "note": "Zalo không phản hồi (timeout 75s) — thử lại sau", "type": "zalo"}
+        if box.get("ok"):
+            note = box.get("phone") or "Session còn sống"
+            return {"input": f"{imei}|...", "status": "live", "name": box.get("name", ""),
+                    "id": box.get("id", ""), "note": note, "type": "zalo"}
+        err = box.get("err", "Không đăng nhập được")
+        status = _classify_zalo_error(err)
+        if status == "unknown" and attempt == 0:
+            time.sleep(2)   # lỗi tạm thời — thử lại 1 lần trước khi báo
+            continue
+        return {"input": f"{imei}|...", "status": status, "name": "", "id": imei,
+                "note": err[:160], "type": "zalo"}
+    return {"input": f"{imei}|...", "status": "unknown", "name": "", "id": imei,
+            "note": "Lỗi không rõ — thử lại sau", "type": "zalo"}
 
 
 def check_zalos(raw):

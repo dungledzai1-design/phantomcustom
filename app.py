@@ -345,9 +345,10 @@ def task_logs(task_id: str, user=Depends(auth.current_user)):
     return {"logs": rt.logs[-100:], "status": rt.status, "uptime": int(rt.uptime())}
 
 
-# ---------------- notifications ----------------
+# ---------------- notifications (chỉ admin xem được — hành động admin đi qua Telegram) ----------------
 @app.get("/api/notifications")
 def notifications(user=Depends(auth.current_user)):
+    auth.require_admin(user)
     return db.list_notifications()
 
 
@@ -373,13 +374,27 @@ def admin_tasks(user=Depends(auth.current_user)):
 @app.post("/api/admin/tasks/{task_id}/stop")
 def admin_stop(task_id: str, user=Depends(auth.current_user)):
     auth.require_admin(user)
-    return {"ok": manager.stop(task_id)}
+    t = manager.get(task_id)
+    ok = manager.stop(task_id)
+    if ok and t:
+        owner = db.get_user(t.get("user_id") or 0)
+        telegram_bot.notify(
+            f"⏹ <b>Admin đã dừng task</b> từ xa trên web\n"
+            f"Task: {task_id} ({t.get('tool', '')}) — chủ: {owner['username'] if owner else '?'}")
+    return {"ok": ok}
 
 
 @app.delete("/api/admin/tasks/{task_id}")
 def admin_delete(task_id: str, user=Depends(auth.current_user)):
     auth.require_admin(user)
-    return {"ok": manager.delete(task_id)}
+    t = manager.get(task_id)
+    ok = manager.delete(task_id)
+    if ok and t:
+        owner = db.get_user(t.get("user_id") or 0)
+        telegram_bot.notify(
+            f"🗑 <b>Admin đã xoá task</b> trên web\n"
+            f"Task: {task_id} ({t.get('tool', '')}) — chủ: {owner['username'] if owner else '?'}")
+    return {"ok": ok}
 
 
 class GrantIn(BaseModel):
@@ -404,7 +419,6 @@ def admin_grant(uid: int, g: GrantIn, user=Depends(auth.current_user)):
     else:
         raise HTTPException(400, "duration không hợp lệ")
     db.update_user(uid, access_until=until, access_label=label)
-    db.add_notification(f"Admin đã cấp quyền {label} cho {target['username']}", "success")
     backup.schedule_soon()
     telegram_bot.notify(f"✅ <b>Admin đã cấp quyền {label}</b> cho {target['username']} (#{uid}) qua web")
     return {"ok": True, "access_until": until, "access_label": label}
@@ -419,6 +433,10 @@ def admin_ban(uid: int, user=Depends(auth.current_user)):
     db.update_user(uid, banned=0 if target.get("banned") else 1)
     if not target.get("banned"):
         manager.stop_all_user(uid)
+        telegram_bot.notify(
+            f"🚫 <b>Admin đã BAN</b> {target['username']} (#{uid}) qua web — toàn bộ task của họ đã dừng")
+    elif target.get("banned"):
+        telegram_bot.notify(f"🕊 <b>Admin đã bỏ ban</b> {target['username']} (#{uid}) qua web")
     return {"ok": True, "banned": not target.get("banned")}
 
 
@@ -434,21 +452,42 @@ def admin_delete_user(uid: int, user=Depends(auth.current_user)):
     manager.delete_all_user(uid)
     ok = db.delete_user(uid)
     if ok:
-        db.add_notification(f"Admin đã xoá tài khoản {target['username']} và toàn bộ task của họ", "warn")
         backup.schedule_soon()
-        telegram_bot.notify(f"🗑 <b>Admin đã xoá user</b> {target['username']} (#{uid}) qua web")
+        telegram_bot.notify(f"🗑 <b>Admin đã xoá user</b> {target['username']} (#{uid}) qua web — kèm toàn bộ task của họ")
     return {"ok": ok}
 
 
-class BroadcastIn(BaseModel):
-    message: str
-    level: str = "info"
+# ---------------- thông báo giữa màn hình (announcement) ----------------
+class AnnIn(BaseModel):
+    text: str
 
 
-@app.post("/api/admin/broadcast")
-def admin_broadcast(b: BroadcastIn, user=Depends(auth.current_user)):
+@app.get("/api/announcement")
+def announcement_public():
+    """Công khai — mọi khách đều đọc được thông báo hiện giữa màn hình."""
+    return db.get_announcement()
+
+
+@app.post("/api/admin/announcement")
+def announcement_set(a: AnnIn, user=Depends(auth.current_user)):
     auth.require_admin(user)
-    db.add_notification(b.message, b.level)
+    text = (a.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Nội dung thông báo đang trống")
+    if len(text) > 3000:
+        raise HTTPException(413, "Nội dung quá dài (tối đa 3000 ký tự)")
+    row = db.set_announcement(text)
+    backup.schedule_soon()
+    telegram_bot.notify(f"📢 <b>Admin đã đăng thông báo</b> giữa màn hình web:\n{text[:500]}")
+    return row
+
+
+@app.delete("/api/admin/announcement")
+def announcement_clear(user=Depends(auth.current_user)):
+    auth.require_admin(user)
+    db.clear_announcement()
+    backup.schedule_soon()
+    telegram_bot.notify("🗑 <b>Admin đã gỡ thông báo</b> khỏi web")
     return {"ok": True}
 
 
@@ -490,7 +529,6 @@ async def ws(websocket: WebSocket):
             await websocket.send_text(json.dumps({
                 "type": "tasks",
                 "tasks": enriched,
-                "notifications": db.list_notifications(10),
                 "server_time": time.time(),
             }, ensure_ascii=False))
             await asyncio.sleep(2)

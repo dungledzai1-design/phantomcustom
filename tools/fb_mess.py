@@ -98,7 +98,6 @@ def run(config, ctx):
     cookies = _parse_list(config.get("cookies"))
     threads = _parse_list(config.get("threads"))
     messages = _parse_list(config.get("messages"))
-    delay = float(config.get("delay", 3) or 3)
     if not cookies or not threads or not messages:
         ctx.log("Thiếu cookie / box / nội dung")
         return
@@ -117,6 +116,7 @@ def run(config, ctx):
 
     keys = list(bots.keys())
     i = 0
+    next_t = time.time()
     while not ctx.stopped:
         ctx.check_pause()
         uid = keys[i % len(keys)]
@@ -127,6 +127,8 @@ def run(config, ctx):
             for msg in messages:
                 if ctx.stopped:
                     break
+                # delay đọc LIVE mỗi tin — sửa config là ăn ngay
+                delay = ctx.interval("delay", 3)
                 ok, err = bot.send(th, msg)
                 if ok:
                     ctx.sent()
@@ -138,7 +140,9 @@ def run(config, ctx):
                             bot.refresh()
                         except Exception:
                             pass
-                if not ctx.wait(delay):
+                # fixed-rate: tin kế bắt đầu đúng `delay` giây kể từ BẮT ĐẦU tin này
+                next_t = ctx.pace(next_t, delay)
+                if next_t is None:
                     break
         i += 1
         if i % 50 == 0:

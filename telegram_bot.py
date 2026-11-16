@@ -3,6 +3,8 @@
 Env (đặt trong Render → Environment):
   TELE_BOT_TOKEN = token bot (BotFather)
   TELE_ADMIN_ID  = chat_id Telegram của admin (lệnh chỉ chạy từ đây)
+                   — nếu chưa set: người đầu tiên nhắn /start cho bot
+                   sẽ được tự lưu làm admin (lưu trong bảng bot_admins)
 
 Lệnh admin:
   /users              — tất cả người dùng (ID, tên, quyền, ngày đăng ký, login cuối)
@@ -36,6 +38,22 @@ def _admin_id():
         return 0
 
 
+def _admin_chats():
+    """Danh sách chat_id admin: env ưu tiên; nếu chưa set env thì lấy từ DB
+    (admin đầu tiên nhắn /start cho bot sẽ được tự lưu)."""
+    env = _admin_id()
+    if env:
+        return [env]
+    try:
+        return [a["chat_id"] for a in db.list_bot_admins()]
+    except Exception:
+        return []
+
+
+def _is_admin(chat):
+    return chat in _admin_chats()
+
+
 def _api(method, **data):
     try:
         r = requests.post(f"{API}/bot{_token()}/{method}", json=data, timeout=70)
@@ -45,13 +63,15 @@ def _api(method, **data):
 
 
 def notify(text):
-    """Gửi thông báo tới chat admin (im lặng nếu chưa cấu hình / lỗi mạng)."""
-    chat = _admin_id()
-    if not (_token() and chat):
+    """Gửi thông báo tới tất cả admin (im lặng nếu chưa cấu hình / lỗi mạng)."""
+    if not _token():
         return False
-    res = _api("sendMessage", chat_id=chat, text=text[:4000],
-               parse_mode="HTML", disable_web_page_preview=True)
-    return bool(res.get("ok"))
+    ok = False
+    for chat in _admin_chats():
+        res = _api("sendMessage", chat_id=chat, text=text[:4000],
+                   parse_mode="HTML", disable_web_page_preview=True)
+        ok = ok or bool(res.get("ok"))
+    return ok
 
 
 # ---------------- helpers chia sẻ ----------------
@@ -73,7 +93,6 @@ def do_grant(uid, duration):
     else:
         return False, "Gói không hợp lệ: week|month|year|forever|revoke"
     db.update_user(uid, access_until=until, access_label=label)
-    db.add_notification(f"Admin đã cấp quyền {label} cho {target['username']}", "success")
     try:
         from backup import schedule_soon
         schedule_soon()
@@ -94,7 +113,6 @@ def do_delete(uid):
         pass
     ok = db.delete_user(uid)
     if ok:
-        db.add_notification(f"Admin đã xoá tài khoản {target['username']} và toàn bộ task của họ", "warn")
         try:
             from backup import schedule_soon
             schedule_soon()
@@ -177,25 +195,48 @@ def handle_update(upd):
     msg = upd.get("message") or {}
     chat = msg.get("chat", {}).get("id")
     text = (msg.get("text") or "").strip()
+    sender = (msg.get("from") or {}).get("username", "")
     if not text or not chat:
-        return
-    if chat != _admin_id():
-        _api("sendMessage", chat_id=chat, text="⛔ Bot chỉ phục vụ admin.")
         return
 
     parts = text.split()
     cmd = parts[0].split("@")[0].lower()
     args = parts[1:]
 
+    # chưa có admin nào (chưa set TELE_ADMIN_ID và DB trống) → người /start đầu tiên làm admin
+    if not _admin_chats():
+        if cmd == "/start":
+            db.add_bot_admin(chat, sender)
+            _api("sendMessage", chat_id=chat, parse_mode="HTML", disable_web_page_preview=True, text=(
+                f"🤖 <b>Bạn đã trở thành admin của bot!</b>\n"
+                f"Chat ID: <code>{chat}</code> (nên đặt thêm vào env TELE_ADMIN_ID trên Render)\n\n"
+                "/users — tất cả người dùng\n"
+                "/info &lt;id&gt; — chi tiết 1 user\n"
+                "/grant &lt;id&gt; week|month|year|forever|revoke — cấp/thu hồi quyền\n"
+                "/del &lt;id&gt; ok — xoá user (cần gõ ok để xác nhận)\n"
+                "/stats — thống kê hệ thống\n\n"
+                "Tự động thông báo tới bạn: 🆕 user đăng ký, 🗑 user bị xoá, ✅ cấp quyền, "
+                "và mọi hành động admin trên web."))
+            return
+        _api("sendMessage", chat_id=chat, text=(
+            f"⛔ Bot chưa có admin. Chủ web nhắn /start để đăng ký "
+            f"(Chat ID của bạn: {chat})."))
+        return
+
+    if not _is_admin(chat):
+        _api("sendMessage", chat_id=chat, text="⛔ Bot chỉ phục vụ admin.")
+        return
+
     if cmd in ("/start", "/help"):
         _api("sendMessage", chat_id=chat, parse_mode="HTML", disable_web_page_preview=True, text=(
-            "🤖 <b>Bot PhantomCustom</b>\n\n"
+            f"🤖 <b>Bot PhantomCustom</b>\nChat ID của bạn: <code>{chat}</code>\n\n"
             "/users — tất cả người dùng\n"
             "/info &lt;id&gt; — chi tiết 1 user\n"
             "/grant &lt;id&gt; week|month|year|forever|revoke — cấp/thu hồi quyền\n"
             "/del &lt;id&gt; ok — xoá user (cần gõ ok để xác nhận)\n"
             "/stats — thống kê hệ thống\n\n"
-            "Tự động thông báo: 🆕 user đăng ký, 🗑 user bị xoá, ✅ cấp quyền."))
+            "Tự động thông báo: 🆕 user đăng ký, 🗑 user bị xoá, ✅ cấp quyền, "
+            "và mọi hành động admin trên web."))
     elif cmd == "/users":
         _api("sendMessage", chat_id=chat, text=cmd_users(), parse_mode="HTML",
              disable_web_page_preview=True)
@@ -258,10 +299,10 @@ def _poll_loop(offset_box):
 
 def start():
     """Bật luồng poll tin nhắn. Trả về True nếu cấu hình đủ."""
-    if not (_token() and _admin_id()):
+    if not (_token() and _admin_chats()):
         return False
     box = [0]
     threading.Thread(target=_poll_loop, args=(box,), daemon=True).start()
     me = _api("getMe").get("result", {})
-    print(f"[tgbot] polling đã bật: @{me.get('username')} → admin chat {_admin_id()}")
+    print(f"[tgbot] polling đã bật: @{me.get('username')} → admin chat {_admin_chats()}")
     return True

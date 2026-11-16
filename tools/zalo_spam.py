@@ -68,7 +68,6 @@ def run(config, ctx):
     groups = [_extract_group_id(g) for g in _parse_list(config.get("groups"))]
     groups = [g for g in groups if g]
     message = config.get("message", "")
-    delay = float(config.get("delay", 5) or 5)
     ttl = config.get("ttl")
     ttl = int(ttl) if str(ttl).strip().isdigit() else None
     colors = config.get("colors") or [1, 2, 3, 4]
@@ -99,17 +98,21 @@ def run(config, ctx):
             return
         ctx.log(f"✅ Tự phát hiện {len(groups)} nhóm — bắt đầu treo.")
 
-    ctx.log(f"Đã đăng nhập bằng IMEI + cookie, treo {len(groups)} nhóm")
+    ctx.log(f"Đã đăng nhập bằng IMEI + cookie, treo {len(groups)} nhóm — delay = giây giữa các tin, áp dụng ngay khi sửa")
     color_index = 0
     last_video = -1
+    next_t = time.time()
     while not ctx.stopped:
         ctx.check_pause()
         for gid in groups:
             if ctx.stopped:
                 break
+            # delay đọc LIVE mỗi tin — sửa config là ăn ngay
+            delay = ctx.interval("delay", 5)
+            typing_wait = min(2.0, delay * 0.4)  # fake đang gõ, không ăn quá sâu vào slot delay
             try:
                 bot.setTyping(gid, ThreadType.GROUP)
-                if not ctx.wait(2):
+                if not ctx.wait(typing_wait):
                     break
 
                 if media_type == "image":
@@ -150,5 +153,7 @@ def run(config, ctx):
                     ctx.log(f"💬 Gửi tin → {gid} (màu {colors[(color_index - 1) % len(colors)]})")
             except Exception as e:
                 ctx.log(f"Lỗi nhóm {gid}: {e}")
-        if not ctx.wait(delay):
-            break
+            # fixed-rate: tin kế bắt đầu đúng `delay` giây kể từ BẮT ĐẦU tin này
+            next_t = ctx.pace(next_t, delay)
+            if next_t is None:
+                break
