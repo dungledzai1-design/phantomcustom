@@ -13,10 +13,22 @@ let editingTask = null;
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (TOKEN) headers.Authorization = "Bearer " + TOKEN;
-  const res = await fetch(path, { ...opts, headers });
-  if (res.status === 401) { logoutLocal(); throw new Error("Phiên hết hạn"); }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || "Lỗi");
+  let res;
+  try {
+    res = await fetch(path, { ...opts, headers, credentials: "same-origin" });
+  } catch (e) {
+    const err = new Error("Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.");
+    err.network = true;
+    throw err;
+  }
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+  if (res.status === 401) { logoutLocal(); const e = new Error("Phiên hết hạn, đăng nhập lại"); e.status = 401; throw e; }
+  if (!res.ok) {
+    const e = new Error(data.detail || `Lỗi máy chủ (${res.status})`);
+    e.status = res.status;
+    throw e;
+  }
   return data;
 }
 
@@ -143,7 +155,7 @@ function fieldHTML(key, val) {
   const f = F[key] || { label: key, type: "text" };
   const v = val !== undefined && val !== null ? val : (f.def !== undefined ? f.def : "");
   let input;
-  if (f.type === "textarea") input = `<textarea data-f="${key}" placeholder="${f.ph || ""}">${v}</textarea>`;
+  if (f.type === "textarea") input = `<div class="ta-wrap"><textarea data-f="${key}" placeholder="${f.ph || ""}">${v}</textarea><label class="ta-import" title="Nhập danh sách từ file .txt">📁 .txt<input type="file" data-import="${key}" accept=".txt,text/plain,.csv" hidden/></label></div>`;
   else if (f.type === "select") input = `<select data-f="${key}">${f.options.map(([o, l]) => `<option value="${o}" ${String(v) === o ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   else input = `<input data-f="${key}" type="${f.type}" value="${v}" placeholder="${f.ph || ""}"/>`;
   return `<div class="field"><label>${f.label}</label>${input}</div>`;
@@ -159,7 +171,18 @@ function openTaskModal(toolKey) {
   $("#taskModalDesc").textContent = t.desc;
   $("#taskFields").innerHTML =
     `<div class="field"><label>Tên task</label><input data-f="__name" value="${t.name}" placeholder="Tên gợi nhớ"/></div>` +
-    t.fields.map((f) => fieldHTML(f)).join("");
+    t.fields.map((f) => fieldHTML(f)).join("") +
+    `<div class="anti-die">
+      <div class="anti-head">🛡 Cấu trúc treo trụ · chống die acc <span class="pill">áp dụng mọi tool</span></div>
+      <p class="hint" style="margin:0 0 10px">Giữ nguyên toàn bộ tham số gốc của tool. Phần này thêm lớp bảo vệ: delay ngẫu nhiên, nghỉ định kỳ, tự dừng khi gửi quá nhiều.</p>
+      <div class="anti-grid">
+        <div class="field"><label>Jitter delay ngẫu nhiên (%)</label><input data-f="jitter" type="number" min="0" max="90" value="25"/></div>
+        <div class="field"><label>Nghỉ sau mỗi N lần gửi</label><input data-f="rest_every" type="number" min="0" value="40"/></div>
+        <div class="field"><label>Thời gian nghỉ (giây)</label><input data-f="rest_time" type="number" min="0" value="30"/></div>
+        <div class="field"><label>Tự dừng sau N tin (0 = không)</label><input data-f="max_sent" type="number" min="0" value="0"/></div>
+      </div>
+    </div>`;
+  bindImporters("#taskFields");
   openModal("overlayTask");
 }
 
@@ -179,6 +202,149 @@ $("#btnCreateTask").onclick = async () => {
     closeModal("overlayTask");
     refreshTasks();
   } catch (e) { toast(e.message, "error"); }
+};
+
+
+/* ---------------- nhập danh sách từ file .txt ---------------- */
+function bindImporters(scope) {
+  $$(scope + " [data-import]").forEach((inp) => {
+    inp.onchange = () => {
+      const file = inp.files && inp.files[0];
+      if (!file) return;
+      const key = inp.dataset.import;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || "").replace(/\r/g, "");
+        const ta = document.querySelector(`${scope} [data-f="${key}"]`);
+        if (!ta) return;
+        const cur = ta.value.trim();
+        ta.value = cur ? cur + "\n" + text.trim() : text.trim();
+        const n = text.split("\n").filter((x) => x.trim()).length;
+        toast(`Đã nhập ${n} dòng từ ${file.name} vào "${key}"`, "success");
+      };
+      reader.onerror = () => toast("Không đọc được file", "error");
+      reader.readAsText(file, "utf-8");
+      inp.value = "";
+    };
+  });
+}
+
+/* ---------------- check live/die ---------------- */
+let CHECK_ROWS = [];
+let CHECK_LAST = null;
+const CHECK_KIND_LABEL = { discord: "Discord token", fb_cookie: "Facebook cookie", fb_link: "Link Facebook", zalo: "Zalo" };
+const CHECK_HINT = {
+  discord: "Discord: mỗi dòng 1 token (dạng MTIz....GGGG.xxxx). Có thể tải file .txt chứa nhiều token.",
+  fb_cookie: "Facebook cookie: mỗi dòng 1 cookie, phải có c_user=... và xs=...",
+  fb_link: "Link Facebook: mỗi dòng 1 link hoặc username hoặc UID. Dán cookie ở ô dưới để check chính xác 100%.",
+  zalo: "Zalo: mỗi dòng imei|cookie_json — hoặc tải nguyên file export (có dòng “IMEI:”).",
+};
+
+$("#btnCheck").onclick = () => {
+  if (!ME) return show("viewAuth");
+  openModal("overlayCheck");
+};
+$("#checkKind").onchange = () => {
+  $("#checkHint").textContent = CHECK_HINT[$("#checkKind").value] || "";
+  $("#checkCookie").parentElement.style.display = $("#checkKind").value === "fb_link" ? "" : "none";
+};
+$("#checkCookie").parentElement.style.display = "none";
+
+$("#checkFile").onchange = () => {
+  const f = $("#checkFile").files && $("#checkFile").files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const text = String(r.result || "").replace(/\r/g, "").trim();
+    const ta = $("#checkData");
+    ta.value = ta.value.trim() ? ta.value.trim() + "\n" + text : text;
+    toast(`Đã tải ${f.name} (${text.split("\n").filter((x) => x.trim()).length} dòng)`, "success");
+  };
+  r.readAsText(f, "utf-8");
+  $("#checkFile").value = "";
+};
+
+$("#btnClearCheck").onclick = () => {
+  $("#checkData").value = "";
+  $("#checkResult").innerHTML = "";
+  $("#checkSummary").classList.add("hidden");
+  $("#btnCopyLive").disabled = true;
+  CHECK_ROWS = [];
+};
+
+$("#btnRunCheck").onclick = async () => {
+  const kind = $("#checkKind").value;
+  const data = $("#checkData").value.trim();
+  if (!data) return toast("Dán danh sách hoặc tải file .txt trước đã", "warn");
+  const btn = $("#btnRunCheck");
+  btn.disabled = true;
+  btn.textContent = "⏳ Đang check...";
+  $("#checkResult").innerHTML = `<div class="check-loading">Đang kiểm tra ${data.split("\n").filter((x) => x.trim()).length} acc… (Zalo mỗi acc ~5–20s)</div>`;
+  try {
+    const res = await api("/api/check", {
+      method: "POST",
+      body: JSON.stringify({ kind, data, cookie: $("#checkCookie").value.trim() }),
+    });
+    CHECK_ROWS = res.results || [];
+    CHECK_LAST = res;
+    renderCheck(res);
+    toast(`Xong: ${res.live} live · ${res.die} die · ${res.unknown} chưa rõ`, res.live ? "success" : "warn");
+  } catch (e) {
+    $("#checkResult").innerHTML = `<div class="check-loading" style="color:#ff8fa3">${esc(e.message)}</div>`;
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "▶ Bắt đầu check";
+  }
+};
+
+function renderCheck(res) {
+  const sum = $("#checkSummary");
+  sum.classList.remove("hidden");
+  sum.innerHTML = `<b>${res.total}</b> acc ·
+    <span class="live">${res.live} LIVE</span> ·
+    <span class="die">${res.die} DIE</span> ·
+    <span class="unk">${res.unknown} chưa xác định</span>`;
+  $("#btnCopyLive").disabled = !res.live;
+  CHECK_SHOWN = 300;
+  paintCheckRows();
+}
+
+let CHECK_SHOWN = 300;
+function paintCheckRows() {
+  const res = CHECK_LAST;
+  if (!res) return;
+  const all = res.results || [];
+  const rows = all.slice(0, CHECK_SHOWN);
+  $("#checkResult").innerHTML = rows.map((r, i) => {
+    const short = r.type === "zalo" ? r.input : (r.input.length > 46 ? r.input.slice(0, 46) + "…" : r.input);
+    return `<div class="check-row ${r.status}">
+      <span class="ck-badge ${r.status}">${r.status === "live" ? "LIVE" : r.status === "die" ? "DIE" : "?"}</span>
+      <div class="ck-main">
+        <div class="ck-name">${esc(r.name || "—")} ${r.id ? `<span class="ck-id">${esc(r.id)}</span>` : ""}</div>
+        <div class="ck-sub mono">${esc(short)}</div>
+        <div class="ck-note">${esc(r.note || "")}</div>
+      </div>
+      <button class="btn sm ghost" onclick="copyText(${i})">Copy</button>
+    </div>`;
+  }).join("") || `<div class="check-loading">Không có dòng nào hợp lệ.</div>`;
+  if (all.length > CHECK_SHOWN) {
+    $("#checkResult").innerHTML +=
+      `<button class="btn" id="btnMoreCheck" style="margin-top:6px">Xem thêm ${Math.min(300, all.length - CHECK_SHOWN)} / còn ${all.length - CHECK_SHOWN} acc</button>`;
+    $("#btnMoreCheck").onclick = () => { CHECK_SHOWN += 300; paintCheckRows(); };
+  }
+}
+
+function copyText(i) {
+  const r = CHECK_ROWS[i];
+  if (!r) return;
+  navigator.clipboard.writeText(r.input).then(() => toast("Đã copy", "success")).catch(() => toast("Không copy được", "error"));
+}
+
+$("#btnCopyLive").onclick = () => {
+  const live = CHECK_ROWS.filter((r) => r.status === "live").map((r) => r.input).join("\n");
+  if (!live) return;
+  navigator.clipboard.writeText(live).then(() => toast(`Đã copy ${CHECK_ROWS.filter((r) => r.status === "live").length} acc LIVE`, "success")).catch(() => toast("Không copy được", "error"));
 };
 
 /* ---------------- task list ---------------- */
@@ -364,10 +530,20 @@ function openRent() { openModal("overlayRent"); }
 $$(".overlay").forEach((o) => o.addEventListener("click", (e) => { if (e.target === o) o.classList.remove("open"); }));
 
 /* ---------------- boot ---------------- */
-async function bootUser() {
+async function bootUser(retry = 0) {
   try {
     ME = await api("/api/me");
-  } catch (e) { logoutLocal(); return; }
+  } catch (e) {
+    if (e.status === 401) { logoutLocal(); return; }
+    // lỗi mạng / máy chủ: giữ token, thử lại thay vì đăng xuất
+    if (retry < 3) {
+      toast("Đang kết nối lại máy chủ...", "warn");
+      await new Promise((r) => setTimeout(r, 1500 * (retry + 1)));
+      return bootUser(retry + 1);
+    }
+    toast(e.message || "Không kết nối được máy chủ", "error");
+    return;
+  }
   $("#dashHello").textContent = `Xin chào ${ME.username} · ${ME.access_label}`;
   $("#accessTag").textContent = ME.access_label;
   $("#accessTag").className = "tag " + (ME.access ? "ok" : "no");
@@ -431,16 +607,86 @@ function ambientStart() {
   } catch (e) {}
 }
 function ambientStop() { ambientNodes.forEach((n) => { try { n.stop(); } catch (e) {} }); ambientNodes = []; ambientOn = false; }
+function setMusicUI(playing) {
+  const eq = $("#eq"), dock = $("#musicDock");
+  if (eq) eq.classList.toggle("hidden", !playing);
+  if (dock) dock.classList.toggle("playing", playing);
+}
+function playMusic() {
+  const audio = $("#bgMusic");
+  if (!audio) return;
+  audio.volume = 0.45;
+  return audio.play().then(() => {
+    setMusicUI(true);
+    toast("🎵 10 ngàn năm — h.ngocday~", "success");
+  }).catch(() => {
+    ambientStart(); setMusicUI(true);
+    toast("🎵 Nhạc ambient (bấm để phát 10 ngàn năm)", "info");
+  });
+}
 $("#musicToggle").onclick = () => {
   const audio = $("#bgMusic");
-  const eq = $("#eq");
-  if (audio.paused) {
-    audio.volume = 0.35;
-    audio.play().then(() => { eq.classList.remove("hidden"); toast("🎵 Đang phát nhạc chill", "success"); })
-      .catch(() => { ambientStart(); eq.classList.remove("hidden"); toast("🎵 Chế độ nhạc ambient (thêm music.mp3 để phát bài 10 ngàn năm)", "info"); });
-  } else {
-    audio.pause(); ambientStop(); eq.classList.add("hidden"); toast("Đã tắt nhạc");
+  if (audio.paused) playMusic();
+  else { audio.pause(); ambientStop(); setMusicUI(false); toast("Đã tắt nhạc"); }
+};
+/* restore music state after reload */
+try {
+  if (sessionStorage.getItem("pc_music") === "1") {
+    document.addEventListener("click", function resumeOnce() {
+      if ($("#bgMusic").paused) playMusic();
+    }, { once: true });
   }
+} catch (e) {}
+$("#bgMusic").addEventListener("play", () => { try { sessionStorage.setItem("pc_music", "1"); } catch (e) {} });
+
+/* ---------------- Facebook UID & Box ---------------- */
+let fbBoxes = [];
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+$("#btnFbInfo").onclick = () => { openModal("overlayFbInfo"); };
+$("#btnFbFetch").onclick = async () => {
+  const cookie = $("#fbCookie").value.trim();
+  if (!cookie) return toast("Dán cookie Facebook trước đã", "warn");
+  const btn = $("#btnFbFetch"); btn.disabled = true; btn.textContent = "Đang lấy...";
+  $("#fbResult").innerHTML = '<div class="sub" style="color:var(--muted)">Đang kết nối Facebook...</div>';
+  try {
+    const data = await api("/api/fb/info", { method: "POST", body: JSON.stringify({ cookie }) });
+    fbBoxes = data.boxes || [];
+    let html = `<div class="card" style="padding:14px;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--muted)">UID</div>
+      <div class="mono" style="font-size:18px;font-weight:800">${esc(data.uid)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">Tên</div>
+      <div style="font-weight:700">${esc(data.name)}</div>
+    </div>`;
+    if (fbBoxes.length) {
+      html += `<div class="sub" style="margin-bottom:8px;color:var(--muted)">Tìm thấy <b style="color:#fff">${fbBoxes.length}</b> box:</div>
+        <div style="max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:6px">`;
+      fbBoxes.forEach((b) => {
+        const meta = [b.type, b.count ? b.count + " tin" : ""].filter(Boolean).join(" · ");
+        html += `<div class="task" style="grid-template-columns:1fr auto;padding:9px 12px;gap:8px">
+          <div><div style="font-size:13px;font-weight:600">${esc(b.name || "(box " + b.id + ")")}</div>
+          <div class="mono" style="font-size:11px;color:var(--muted)">${esc(b.id)}${meta ? " · " + esc(meta) : ""}</div>
+          ${b.snippet ? `<div style="font-size:11px;color:#6f6f7a;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.snippet)}</div>` : ""}</div>
+          <button class="btn sm" data-copy="${esc(b.id)}">Copy</button></div>`;
+      });
+      html += `</div>`;
+    } else {
+      html += `<div class="sub" style="color:var(--muted)">${esc(data.note || "Không đọc được danh sách box (cookie có thể thiếu quyền hoặc FB chặn). UID vẫn dùng được.")}</div>`;
+    }
+    $("#fbResult").innerHTML = html;
+    $("#btnFbCopyAll").disabled = fbBoxes.length === 0;
+    $("#fbResult").querySelectorAll("[data-copy]").forEach((el) => {
+      el.onclick = () => { navigator.clipboard?.writeText(el.dataset.copy); toast("Đã copy " + el.dataset.copy, "success"); };
+    });
+    toast(`Lấy xong: UID ${data.uid} · ${fbBoxes.length} box`, "success");
+  } catch (e) {
+    $("#fbResult").innerHTML = `<div class="sub" style="color:var(--danger)">${esc(e.message)}</div>`;
+    toast(e.message, "error");
+  } finally { btn.disabled = false; btn.textContent = "Lấy thông tin"; }
+};
+$("#btnFbCopyAll").onclick = () => {
+  const ids = fbBoxes.map((b) => b.id).join("\n");
+  navigator.clipboard?.writeText(ids);
+  toast("Đã copy " + fbBoxes.length + " ID box", "success");
 };
 
 /* auto-start music on first user interaction */

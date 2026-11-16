@@ -18,7 +18,26 @@ def _conn():
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
     c.execute("PRAGMA synchronous=NORMAL")
+    c.execute("PRAGMA busy_timeout=8000")
+    c.execute("PRAGMA cache_size=-8000")
+    c.execute("PRAGMA temp_store=MEMORY")
+    c.execute("PRAGMA wal_autocheckpoint=400")
     return c
+
+
+def _retry(fn, attempts=4, delay=0.08):
+    """Chạy 1 thao tác DB, tự thử lại khi SQLite bị khoá (nhiều luồng cùng ghi)."""
+    last = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            last = e
+            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                raise
+            time.sleep(delay * (i + 1))
+    if last:
+        raise last
 
 
 def init_db():
@@ -57,6 +76,8 @@ def init_db():
                 last_error TEXT DEFAULT '',
                 log TEXT DEFAULT ''
             );
+            CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message TEXT NOT NULL,

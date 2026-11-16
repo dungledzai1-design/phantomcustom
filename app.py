@@ -5,21 +5,75 @@ import os
 import time
 import asyncio
 import json
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Body
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Body, Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
 import database as db
 import auth
+import guard
 from task_manager import manager
 from tools import TOOL_META
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-app = FastAPI(title="PhantomCustom")
+app = FastAPI(title="PhantomCustom", docs_url=None, redoc_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=800)
 
 db.init_db()
 db.seed_admin()
+
+
+# ---------------- lớp bảo vệ tải / ổn định ----------------
+class GuardMiddleware(BaseHTTPMiddleware):
+    """Chặn body quá lớn, rate-limit theo IP, thêm header cache cho static."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # 1) chặn body quá lớn (đọc header trước khi parse)
+        try:
+            clen = int(request.headers.get("content-length") or 0)
+        except Exception:
+            clen = 0
+        if clen > guard.MAX_BODY_BYTES:
+            return JSONResponse({"detail": "Dữ liệu gửi lên quá lớn (tối đa 4MB)"}, status_code=413)
+
+        # 2) rate limit
+        limit, window = guard.rule_for(path)
+        if limit:
+            ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                  or (request.client.host if request.client else "?"))
+            if not guard.limiter.allow(f"{ip}|{path.split('/')[2] if len(path.split('/')) > 2 else path}", limit, window):
+                return JSONResponse(
+                    {"detail": "Bạn thao tác quá nhanh, vui lòng thử lại sau vài giây"},
+                    status_code=429,
+                )
+
+        response = await call_next(request)
+
+        # 3) cache static để giảm tải server
+        if path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
+
+app.add_middleware(GuardMiddleware)
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """Không bao giờ để lộ stack trace / sập trắng trang."""
+    print("[error]", request.url.path, type(exc).__name__, exc)
+    return JSONResponse({"detail": "Máy chủ gặp lỗi tạm thời, vui lòng thử lại"}, status_code=500)
+
+
+@app.get("/healthz")
+def healthz():
+    return PlainTextResponse("ok")
 
 # resume persisted tasks on startup
 @app.on_event("startup")
@@ -86,6 +140,70 @@ def tools():
 @app.get("/favicon.ico")
 def favicon():
     return FileResponse(os.path.join(BASE, "static", "favicon.svg"))
+
+
+# ---------------- facebook info (uid + box list) ----------------
+class FbInfoIn(BaseModel):
+    cookie: str
+
+
+@app.post("/api/fb/info")
+async def fb_info(body: FbInfoIn, user=Depends(auth.current_user)):
+    """Lấy UID, tên và danh sách box từ cookie Facebook."""
+    from tools import fb_info as fbi
+    cookie = (body.cookie or "").strip()
+    if len(cookie) > 20000:
+        raise HTTPException(status_code=413, detail="Cookie quá dài")
+    try:
+        return await asyncio.to_thread(fbi.get_info, cookie)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Không lấy được thông tin: {e}")
+
+
+# ---------------- checker: live/die hàng loạt ----------------
+class CheckIn(BaseModel):
+    kind: str
+    data: str
+    cookie: str = ""
+
+
+_check_sem = asyncio.Semaphore(4)   # tối đa 4 lượt check nặng cùng lúc
+
+
+@app.post("/api/check")
+async def check_accounts(body: CheckIn, user=Depends(auth.current_user)):
+    """Check live/die hàng loạt: discord | fb_cookie | fb_link | zalo.
+
+    Chạy trong threadpool + giới hạn song song để không bao giờ làm nghẽn server.
+    """
+    from tools import checker
+    kind = (body.kind or "").lower()
+    if kind not in ("discord", "fb_cookie", "fb_link", "zalo"):
+        raise HTTPException(status_code=400, detail="Loại check không hỗ trợ: " + kind)
+
+    data = body.data or ""
+    lines = [x for x in data.replace("\r", "").split("\n") if x.strip()]
+    cap = guard.MAX_CHECK_LINES_ZALO if kind == "zalo" else guard.MAX_CHECK_LINES
+    truncated = 0
+    if len(lines) > cap:
+        truncated = len(lines) - cap
+        lines = lines[:cap]
+        data = "\n".join(lines)
+
+    try:
+        async with _check_sem:
+            res = await asyncio.to_thread(checker.run_check, kind, data, (body.cookie or "").strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Lỗi khi check: {e}")
+
+    if truncated:
+        res["truncated"] = truncated
+        res["note"] = f"Chỉ check {cap} acc đầu tiên, còn {truncated} acc chưa xử lý (chia nhỏ file để check tiếp)"
+    return res
 
 
 # ---------------- tasks ----------------
@@ -258,6 +376,17 @@ async def ws(websocket: WebSocket):
         await websocket.close()
         return
     user = db.get_user(sess["user_id"])
+    if not user:
+        await websocket.close()
+        return
+    # giới hạn số kết nối realtime để không bao giờ cạn tài nguyên
+    if not guard.ws_acquire(user["id"]):
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "detail": "Quá nhiều kết nối realtime"}))
+        except Exception:
+            pass
+        await websocket.close()
+        return
     try:
         while True:
             if user["is_admin"]:
@@ -283,6 +412,8 @@ async def ws(websocket: WebSocket):
         return
     except Exception:
         return
+    finally:
+        guard.ws_release(user["id"])
 
 
 if __name__ == "__main__":
