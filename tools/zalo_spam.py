@@ -144,7 +144,7 @@ def run(config, ctx):
                         bot.send(msg, thread_id=gid, thread_type=ThreadType.GROUP)
                     ctx.sent()
                     color_index += 1
-                    ctx.log(f"💬 Gửi tin → {gid}")
+                    ctx.log(f"💬 Gửi tin → {gid} (màu {colors[(color_index - 1) % len(colors)]})")
             except Exception as e:
                 ctx.log(f"Lỗi nhóm {gid}: {e}")
         if not ctx.wait(delay):

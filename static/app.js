@@ -125,15 +125,15 @@ const F = {
   delay: { label: "Delay (giây)", type: "number", ph: "3", def: 3 },
   api_key: { label: "API Key Zalo", type: "text", ph: "api_key" },
   secret_key: { label: "Secret Key Zalo", type: "text", ph: "secret_key" },
-  imei: { label: "IMEI (bắt buộc)", type: "text", ph: "b84aaf8f3e411c94" },
-  cookies: { label: "Cookie / Session (bắt buộc · JSON hoặc chuỗi)", type: "textarea", ph: "{\"zpsid\":\"...\",\"zpw_sek\":\"...\"}\nhoặc c_user=...; xs=..." },
+  imei: { label: "IMEI (bắt buộc)", type: "text", ph: "b84aaf8f3e411c94", hint: "Dán IMEI của acc. Có thể để trống nếu file cookie .txt có sẵn dòng IMEI — web tự đọc." },
+  cookies: { label: "Cookie / Session (bắt buộc · JSON hoặc chuỗi)", type: "textarea", ph: "{\"zpsid\":\"...\",\"zpw_sek\":\"...\"}\nhoặc c_user=...; xs=...", hint: "Dán nguyên file cookie .txt (có dòng Tên/IMEI/COOKIE JSON) hoặc chỉ khối JSON — web tự tách. Cookie die → web báo lỗi ngay khi tạo task." },
   cookie: { label: "Cookie Facebook", type: "textarea", ph: "c_user=...; xs=..." },
   groups: { label: "Group ID / link Zalo (để trống = tự đọc toàn bộ nhóm đang tham gia)", type: "textarea", ph: "Để trống → web tự lấy hết nhóm trong acc\nHoặc: 123456789 | https://zalo.me/g/xxx" },
   threads: { label: "Box / thread ID Messenger (mỗi dòng 1)", type: "textarea", ph: "1000123456789" },
   thread: { label: "Box / thread ID", type: "text", ph: "1000123456789" },
   members: { label: "Member UID để tag (mỗi dòng 1, có thể uid:tên)", type: "textarea", ph: "10001:Nguyễn A\n10002:Trần B" },
   ttl: { label: "TTL (ms, để trống = không)", type: "number", ph: "0" },
-  colors: { label: "Màu tin nhắn (1-4, vd: 1,2,3,4)", type: "text", ph: "1,2,3,4", def: "1,2,3,4" },
+  colors: { label: "Màu tin nhắn (1-4, vd: 1,2,3,4)", type: "text", ph: "1,2,3,4", def: "1,2,3,4", hint: "1 = Đỏ 🔴 · 2 = Cam 🟠 · 3 = Vàng 🟡 · 4 = Xanh lá 🟢 — đây là màu chữ của tin nhắn gửi vào box. Nhập nhiều màu (vd 1,2,3,4) để web tự đổi màu mỗi tin một kiểu; chỉ muốn 1 màu thì nhập số đó (vd 4 = xanh lá)." },
   media_type: { label: "Loại media", type: "select", options: [["none", "Không media"], ["image", "Ảnh"], ["video", "Video"]] },
   media_source: { label: "Nguồn media (thư mục ảnh hoặc URL video mỗi dòng)", type: "textarea", ph: "/path/images\nhttps://...mp4" },
   typing: { label: "Fake typing MQTT", type: "select", options: [["true", "Bật"], ["false", "Tắt"]] },
@@ -161,7 +161,7 @@ function fieldHTML(key, val) {
   const extra = key === "groups"
     ? `<button type="button" class="btn ghost sm btn-autogroups" data-autogroups="1">🔎 Tự lấy box từ IMEI + cookie</button>`
     : "";
-  return `<div class="field"><label>${f.label}</label>${input}${extra}</div>`;
+  return `<div class="field"><label>${f.label}</label>${input}${f.hint ? `<div class="hint">${f.hint}</div>` : ""}${extra}</div>`;
 }
 
 /* ---------------- tự lấy danh sách box Zalo từ IMEI + cookie ---------------- */

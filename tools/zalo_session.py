@@ -23,22 +23,37 @@ class ZaloSessionError(Exception):
 
 
 def parse_cookie(raw):
-    """Chuẩn hoá cookie về dict. Hỗ trợ JSON, JSON lồng, và chuỗi 'a=b; c=d'."""
+    """Chuẩn hoá cookie về dict. Hỗ trợ JSON (kể cả dán nguyên file .txt có dòng
+    tiêu đề), JSON lồng, và chuỗi 'a=b; c=d'."""
     if isinstance(raw, dict):
         data = raw
     else:
         text = str(raw or "").strip()
         if not text:
             return {}
+        data = None
+        # 1) Toàn bộ chuỗi là JSON
         try:
             data = json.loads(text)
         except Exception:
+            pass
+        # 2) JSON nằm giữa các dòng tiêu đề của file .txt (vd '=== ZALO COOKIE ===')
+        #    → tách khối { ... } đầu tiên, tránh nhầm dấu '=' trong tiêu đề thành cookie
+        if not isinstance(data, dict):
+            m = re.search(r"\{[^{}]*\}", text, re.S)
+            if m:
+                try:
+                    data = json.loads(m.group(0))
+                except Exception:
+                    data = None
+        # 3) Chuỗi cookie kiểu 'a=b; c=d'
+        if not isinstance(data, dict):
             out = {}
             for part in re.split(r"[;\n]+", text):
                 if "=" in part:
                     k, v = part.split("=", 1)
                     out[k.strip()] = v.strip()
-            return out
+            data = out
     if not isinstance(data, dict):
         return {}
     # JSON export dạng {"imei": "...", "cookies": {...}}
@@ -59,15 +74,16 @@ def parse_cookie(raw):
 
 
 def parse_imei(raw_cookie, raw_imei=""):
-    """Lấy IMEI từ ô nhập, nếu trống thì thử đọc trong JSON cookie."""
+    """Lấy IMEI từ ô nhập, nếu trống thì thử đọc trong JSON cookie hoặc dòng
+    'IMEI: xxx' trong file .txt (không phân biệt hoa/thường)."""
     imei = str(raw_imei or "").strip()
     if imei:
         return imei
     text = str(raw_cookie or "")
-    m = re.search(r'"imei"\s*:\s*"([^"]+)"', text)
+    m = re.search(r'"imei"\s*:\s*"([^"]+)"', text, re.I)
     if m:
         return m.group(1).strip()
-    m = re.search(r"imei\s*[=:]\s*([A-Za-z0-9_-]{8,})", text)
+    m = re.search(r"\bimei\s*[=:]\s*([A-Za-z0-9_-]{8,})", text, re.I)
     return m.group(1).strip() if m else ""
 
 
@@ -104,7 +120,14 @@ def login(imei, raw_cookie):
     except TypeError:
         state.login(None, None, imei, None)
     except Exception as e:
-        raise ZaloSessionError(f"Cookie hết hạn hoặc sai IMEI: {e}")
+        msg = str(e)
+        if "NoneType" in msg or "not subscriptable" in msg:
+            raise ZaloSessionError(
+                "Zalo từ chối đăng nhập bằng cookie này — cookie sai định dạng, "
+                "thiếu key hoặc đã bị đăng xuất. Hãy lấy lại cookie mới (file .txt "
+                "đầy đủ IMEI + COOKIE JSON dán thẳng vào ô Cookie là được)."
+            )
+        raise ZaloSessionError(f"Cookie hết hạn hoặc sai IMEI: {msg}")
 
     try:
         logged = bot.isLoggedIn()
