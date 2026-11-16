@@ -115,9 +115,9 @@ def register(c: Credentials):
     if not uid:
         raise HTTPException(400, "Tên đăng nhập đã tồn tại")
     backup.schedule_soon()   # user mới phải có trên backup càng sớm càng tốt
-    telegram_bot.notify(f"🆕 <b>Đăng ký mới!</b>\nUser: <b>{user['username']}</b> (#{uid})\nThời gian: {time.strftime('%d/%m/%Y %H:%M')}\nTổng số user: {len(db.list_users())}")
     token = db.create_session(uid)
     user = db.get_user(uid)
+    telegram_bot.notify(f"🆕 <b>Đăng ký mới!</b>\nUser: <b>{user['username']}</b> (#{uid})\nThời gian: {time.strftime('%d/%m/%Y %H:%M')}\nTổng số user: {len(db.list_users())}")
     return {"token": token, "user": auth.public_user(user)}
 
 
