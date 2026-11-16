@@ -158,7 +158,42 @@ function fieldHTML(key, val) {
   if (f.type === "textarea") input = `<div class="ta-wrap"><textarea data-f="${key}" placeholder="${f.ph || ""}">${v}</textarea><label class="ta-import" title="Nhập danh sách từ file .txt">📁 .txt<input type="file" data-import="${key}" accept=".txt,text/plain,.csv" hidden/></label></div>`;
   else if (f.type === "select") input = `<select data-f="${key}">${f.options.map(([o, l]) => `<option value="${o}" ${String(v) === o ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   else input = `<input data-f="${key}" type="${f.type}" value="${v}" placeholder="${f.ph || ""}"/>`;
-  return `<div class="field"><label>${f.label}</label>${input}</div>`;
+  const extra = key === "groups"
+    ? `<button type="button" class="btn ghost sm btn-autogroups" data-autogroups="1">🔎 Tự lấy box từ IMEI + cookie</button>`
+    : "";
+  return `<div class="field"><label>${f.label}</label>${input}${extra}</div>`;
+}
+
+/* ---------------- tự lấy danh sách box Zalo từ IMEI + cookie ---------------- */
+function bindAutoGroups(scope) {
+  $$(scope + " [data-autogroups]").forEach((btn) => {
+    btn.onclick = async () => {
+      const box = btn.closest("#taskFields") || btn.closest("#editFields") || document;
+      const imeiEl = box.querySelector('[data-f="imei"]');
+      const ckEl = box.querySelector('[data-f="cookies"]');
+      const gEl = box.querySelector('[data-f="groups"]');
+      const imei = imeiEl ? imeiEl.value.trim() : "";
+      const ck = ckEl ? ckEl.value.trim() : "";
+      if (!imei && !ck) return toast("Nhập IMEI + cookie Zalo trước đã", "error");
+      const old = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳ Đang đọc nhóm...";
+      try {
+        const r = await api("/api/zalo/groups", {
+          method: "POST",
+          body: JSON.stringify({ imei, cookies: ck }),
+        });
+        const list = r.groups || [];
+        if (gEl) gEl.value = list.join("\n");
+        toast(`Đã lấy ${r.count} nhóm${r.name ? " · " + r.name : ""}`, "success");
+      } catch (e) {
+        toast(e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    };
+  });
 }
 
 /* ---------------- create task ---------------- */
@@ -173,6 +208,7 @@ function openTaskModal(toolKey) {
     `<div class="field"><label>Tên task</label><input data-f="__name" value="${t.name}" placeholder="Tên gợi nhớ"/></div>` +
     t.fields.map((f) => fieldHTML(f)).join("");
   bindImporters("#taskFields");
+  bindAutoGroups("#taskFields");
   openModal("overlayTask");
 }
 
@@ -398,6 +434,8 @@ function editTask(id) {
   editingTask = id;
   const fields = TOOLS[t.tool].fields;
   $("#editFields").innerHTML = fields.map((f) => fieldHTML(f, t.config[f])).join("");
+  bindImporters("#editFields");
+  bindAutoGroups("#editFields");
   openModal("overlayEdit");
 }
 $("#btnSaveConfig").onclick = async () => {

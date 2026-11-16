@@ -53,9 +53,15 @@ class GuardMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # 3) cache static để giảm tải server
+        # 3) cache: asset có ?v=... thì cache dài, còn HTML thì KHÔNG cache
         if path.startswith("/static/"):
-            response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+            if request.query_params.get("v"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=300, must-revalidate"
+        elif path == "/" or path.endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         return response
@@ -160,6 +166,57 @@ async def fb_info(body: FbInfoIn, user=Depends(auth.current_user)):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Không lấy được thông tin: {e}")
+
+
+# ---------------- zalo: tự lấy box từ IMEI + cookie ----------------
+class ZaloGroupsIn(BaseModel):
+    imei: str = ""
+    cookies: str = ""
+
+
+_zalo_scan_sem = asyncio.Semaphore(3)   # tránh mở quá nhiều phiên Zalo cùng lúc
+
+
+@app.post("/api/zalo/groups")
+async def zalo_groups(body: ZaloGroupsIn, user=Depends(auth.current_user)):
+    """Đăng nhập bằng IMEI + session cookie và trả về toàn bộ nhóm đang tham gia."""
+    from tools.zalo_session import (
+        login as zalo_login,
+        auto_groups,
+        account_info,
+        ZaloSessionError,
+    )
+
+    imei = (body.imei or "").strip()
+    cookies = (body.cookies or "").strip()
+    if not imei and not cookies:
+        raise HTTPException(status_code=400, detail="Nhập IMEI + cookie Zalo trước đã.")
+    if len(cookies) > 40000:
+        raise HTTPException(status_code=413, detail="Cookie quá dài")
+
+    def _work():
+        bot = zalo_login(imei, cookies)
+        groups = auto_groups(bot)
+        try:
+            info = account_info(bot) or {}
+        except Exception:
+            info = {}
+        return {
+            "groups": groups,
+            "name": info.get("name") or "",
+            "uid": info.get("uid") or "",
+            "phone": info.get("phone") or "",
+        }
+
+    async with _zalo_scan_sem:
+        try:
+            res = await asyncio.to_thread(_work)
+        except ZaloSessionError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Không đọc được nhóm: {e}")
+
+    return {"ok": True, "count": len(res["groups"]), **res}
 
 
 # ---------------- checker: live/die hàng loạt ----------------
