@@ -23,11 +23,13 @@ app = FastAPI(title="PhantomCustom", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=800)
 
 import backup
+import telegram_bot
 from backup import start as backup_start
 
 backup_start()   # khôi phục DB từ GitHub backup (container mới) + bật backup tự động
 db.init_db()
 db.seed_admin()
+telegram_bot.start()   # bot Telegram: lệnh admin từ xa + thông báo user mới
 
 
 # ---------------- lớp bảo vệ tải / ổn định ----------------
@@ -113,6 +115,7 @@ def register(c: Credentials):
     if not uid:
         raise HTTPException(400, "Tên đăng nhập đã tồn tại")
     backup.schedule_soon()   # user mới phải có trên backup càng sớm càng tốt
+    telegram_bot.notify(f"🆕 <b>Đăng ký mới!</b>\nUser: <b>{user['username']}</b> (#{uid})\nThời gian: {time.strftime('%d/%m/%Y %H:%M')}\nTổng số user: {len(db.list_users())}")
     token = db.create_session(uid)
     user = db.get_user(uid)
     return {"token": token, "user": auth.public_user(user)}
@@ -403,6 +406,7 @@ def admin_grant(uid: int, g: GrantIn, user=Depends(auth.current_user)):
     db.update_user(uid, access_until=until, access_label=label)
     db.add_notification(f"Admin đã cấp quyền {label} cho {target['username']}", "success")
     backup.schedule_soon()
+    telegram_bot.notify(f"✅ <b>Admin đã cấp quyền {label}</b> cho {target['username']} (#{uid}) qua web")
     return {"ok": True, "access_until": until, "access_label": label}
 
 
@@ -432,6 +436,7 @@ def admin_delete_user(uid: int, user=Depends(auth.current_user)):
     if ok:
         db.add_notification(f"Admin đã xoá tài khoản {target['username']} và toàn bộ task của họ", "warn")
         backup.schedule_soon()
+        telegram_bot.notify(f"🗑 <b>Admin đã xoá user</b> {target['username']} (#{uid}) qua web")
     return {"ok": ok}
 
 
