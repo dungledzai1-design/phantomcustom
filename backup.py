@@ -27,6 +27,29 @@ MAX_SIZE = 80 * 1024 * 1024   # contents API giới hạn ~100MB, giữ biên an
 PATH = "phantom.db"
 
 _last_hash = None
+_soon_timer = None
+
+
+def schedule_soon():
+    """Backup gấp sau thao tác quan trọng (đăng ký, xoá user, tạo/dừng task...).
+    Debounce: chỉ 1 lần đẩy trong ~6 giây dù gọi nhiều lần liên tiếp."""
+    global _soon_timer
+    if _soon_timer is not None:
+        return
+    t = threading.Timer(6.0, _run_soon)
+    t.daemon = True
+    _soon_timer = t
+    t.start()
+
+
+def _run_soon():
+    global _soon_timer
+    _soon_timer = None
+    try:
+        if backup_once():
+            print("[backup] backup gấp sau thao tác quan trọng ✅")
+    except Exception as e:
+        print("[backup] backup gấp lỗi:", e)
 
 
 def _env():
@@ -148,5 +171,16 @@ def start():
 
     atexit.register(_on_exit)
     threading.Thread(target=_loop, daemon=True).start()
+    # đẩy ngay một bản baseline nếu DB có dữ liệu (chống mất dữ liệu khi
+    # container vừa lên rồi bị deploy lại sau ít giây)
+    threading.Thread(target=_baseline, daemon=True).start()
     print(f"[backup] bật tự động backup mỗi {INTERVAL}s → {repo}")
     return True
+
+
+def _baseline():
+    try:
+        if backup_once():
+            print("[backup] baseline backup khi khởi động ✅")
+    except Exception:
+        pass

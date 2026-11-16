@@ -10,6 +10,12 @@ import traceback
 import database as db
 import tools as registry
 
+try:
+    from backup import schedule_soon
+except Exception:  # backup chưa có env -> không sao
+    def schedule_soon():
+        pass
+
 MAX_TASKS_PER_USER = 300
 
 
@@ -144,6 +150,7 @@ class TaskManager:
         with self.lock:
             self.tasks[task_id] = rt
         self._spawn(rt)
+        schedule_soon()
         return rt
 
     def _spawn(self, rt):
@@ -200,6 +207,7 @@ class TaskManager:
         rt.stopped_at = time.time()
         db.update_task(task_id, status="stopped", stopped_at=rt.stopped_at)
         rt.add_log("Đã dừng task theo yêu cầu")
+        schedule_soon()
         return True
 
     def pause(self, task_id):
@@ -242,6 +250,7 @@ class TaskManager:
         with self.lock:
             self.tasks.pop(task_id, None)
         db.delete_task(task_id)
+        schedule_soon()
         return True
 
     def update_config(self, task_id, config):

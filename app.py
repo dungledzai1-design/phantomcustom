@@ -22,6 +22,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="PhantomCustom", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=800)
 
+import backup
 from backup import start as backup_start
 
 backup_start()   # khôi phục DB từ GitHub backup (container mới) + bật backup tự động
@@ -111,6 +112,7 @@ def register(c: Credentials):
     uid = db.create_user(c.username.strip(), c.password)
     if not uid:
         raise HTTPException(400, "Tên đăng nhập đã tồn tại")
+    backup.schedule_soon()   # user mới phải có trên backup càng sớm càng tốt
     token = db.create_session(uid)
     user = db.get_user(uid)
     return {"token": token, "user": auth.public_user(user)}
@@ -400,6 +402,7 @@ def admin_grant(uid: int, g: GrantIn, user=Depends(auth.current_user)):
         raise HTTPException(400, "duration không hợp lệ")
     db.update_user(uid, access_until=until, access_label=label)
     db.add_notification(f"Admin đã cấp quyền {label} cho {target['username']}", "success")
+    backup.schedule_soon()
     return {"ok": True, "access_until": until, "access_label": label}
 
 
@@ -428,6 +431,7 @@ def admin_delete_user(uid: int, user=Depends(auth.current_user)):
     ok = db.delete_user(uid)
     if ok:
         db.add_notification(f"Admin đã xoá tài khoản {target['username']} và toàn bộ task của họ", "warn")
+        backup.schedule_soon()
     return {"ok": ok}
 
 
