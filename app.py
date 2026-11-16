@@ -85,13 +85,24 @@ async def _unhandled(request: Request, exc: Exception):
 
 @app.get("/healthz")
 def healthz():
-    return PlainTextResponse("ok")
+    import keepalive
+    return {
+        "ok": True,
+        "uptime": int(time.time() - PROCESS_STARTED_AT),
+        "keepalive": keepalive.status(),
+        "tasks_running": sum(1 for t in manager.list_all() if t["status"] == "running"),
+    }
+
+PROCESS_STARTED_AT = time.time()
 
 # resume persisted tasks on startup
 @app.on_event("startup")
 async def _startup():
     n = manager.resume_persisted()
     print(f"[startup] resumed {n} tasks")
+    import keepalive
+    keepalive.start()      # tự ping chặn Render ngủ → treo 24/7 không phụ thuộc tab/máy user
+    manager.start_flusher()  # ghi tiến độ task vào DB định kỳ → restart không mất bộ đếm
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
 

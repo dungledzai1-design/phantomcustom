@@ -3,6 +3,7 @@
 Each task is persisted in SQLite. On server restart, tasks that were running
 are automatically resumed so accounts keep "treo" 24/7 until the user stops.
 """
+import os
 import time
 import uuid
 import json
@@ -323,6 +324,38 @@ class TaskManager:
         for t in self.list_for_user(user_id):
             self.delete(t["id"])
         return True
+
+    def start_flusher(self):
+        """Ghi định kỳ sent_count + log của task ĐANG CHẠY xuống DB.
+
+        Trước đây bộ đếm chỉ được ghi khi task kết thúc → server restart (deploy,
+        Render cold start) là mất số tin đã gửi. Flusher mỗi FLUSH_SEC giây (mặc
+        định 60) chụp lại tiến độ → resume_persisted() khôi phục đúng số."""
+        if getattr(self, "_flusher_started", False):
+            return
+        self._flusher_started = True
+        try:
+            sec = int(os.environ.get("FLUSH_SEC", "60") or 60)
+        except ValueError:
+            sec = 60
+        sec = max(10, sec)
+
+        def _loop():
+            while True:
+                time.sleep(sec)
+                with self.lock:
+                    running = [t for t in self.tasks.values() if t.status == "running"]
+                for rt in running:
+                    try:
+                        with rt._lock:
+                            sent = rt.sent_count
+                            logs = "\n".join(rt.logs[-200:])
+                        db.update_task(rt.id, sent_count=sent, log=logs)
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_loop, daemon=True, name="task-flusher").start()
+        print(f"[task-manager] flusher bật — ghi tiến độ task vào DB mỗi {sec}s")
 
     def resume_persisted(self):
         """On startup, resume tasks that were running/paused before restart."""
