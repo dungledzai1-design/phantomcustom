@@ -1,7 +1,10 @@
 """Facebook info helpers: lấy UID, tên và danh sách box (thread) từ cookie.
 
 Không gửi tin nhắn — chỉ đọc thông tin tài khoản & hội thoại.
-Chiến lược: www (full browser headers) + GraphQL thread list, fallback mbasic.
+Chiến lược:
+  1. Probe session ngay từ đầu: cookie chết / checkpoint -> báo lỗi rõ ràng, fail fast.
+  2. GraphQL thread list (dùng fb_dtsg từ trang chủ, thử nhiều doc_id).
+  3. Fallback HTML: m.facebook.com (UA mobile, server-render) + www messages.
 """
 import re
 import json
@@ -12,23 +15,24 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+UA_DESKTOP = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+UA_MOBILE = ("Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
 
-# doc_id của query "MessengerThreadList" (thay đổi theo thời gian, thử lần lượt)
+# doc_id query MessengerThreadList — FB đổi theo đợt, thử lần lượt từ mới -> cũ
 THREAD_DOC_IDS = [
-    "1349387578499440",
+    "1349387578499440",   # trả shape chuẩn viewer.message_threads
+    "8950423881581457",
+    "6884651387771581",
     "3336396838921549",
-    "7731783905042825",
-    "9210108100896373",
-    "7045423711033265",
 ]
 
 
-def _headers(cookie: str) -> dict:
+def _headers(cookie: str, ua: str = UA_DESKTOP) -> dict:
     return {
         "Cookie": cookie,
-        "User-Agent": UA,
+        "User-Agent": ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
         "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
@@ -97,19 +101,75 @@ def get_name(s: requests.Session, uid: str) -> str:
     return ""
 
 
-def _tokens(s: requests.Session):
-    """Lấy fb_dtsg + lsd từ trang chủ."""
+_DTSG_PATTERNS = [
+    r'"DTSGInitialData",\[\],\{"token":"([^"]+)"',
+    r'"DTSGInitData",\[\],\{"token":"([^"]+)"',
+    r'"DTSGInitialData":\[\]\s*,\s*\{"token":"([^"]+)"',
+    r'["\']fb_dtsg["\']\s*:\s*["\']([^"\']{25,})',
+    r'name="fb_dtsg"\s+value="([^"]+)"',
+    r'"async_get_request_token":"([^"]+)"',
+]
+
+_LSD_PATTERNS = [
+    r'"LSD",\[\],\{"token":"([^"]+)"',
+    r'"LSD":\[\]\s*,\s*\{"token":"([^"]+)"',
+    r'["\']lsd["\']\s*:\s*["\']([^"\']{8,})',
+]
+
+
+def _extract(text: str, patterns) -> str:
+    for pat in patterns:
+        m = re.search(pat, text or "")
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _probe_session(s: requests.Session, uid: str):
+    """GET trang chủ 1 lần: xác định cookie sống/chết + lấy sẵn dtsg/lsd.
+
+    Trả về (status, home_html): status in {"ok", "login", "checkpoint"}.
+    """
     try:
-        r = s.get("https://www.facebook.com/", timeout=25)
-        if r.status_code != 200:
-            return None, None
-        m = (re.search(r'"DTSGInitialData",\[\],\{"token":"(.*?)"', r.text)
-             or re.search(r'name="fb_dtsg"\s+value="(.*?)"', r.text))
-        dtsg = m.group(1) if m else None
-        m2 = re.search(r'"LSD",\[\],\{"token":"(.*?)"', r.text)
-        return dtsg, (m2.group(1) if m2 else "")
+        r = s.get("https://www.facebook.com/", timeout=20)
     except Exception:
-        return None, None
+        return "ok", ""   # lỗi mạng: bỏ qua probe, để bước sau thử tiếp
+    final = str(r.url)
+    if "checkpoint" in final:
+        return "checkpoint", r.text
+    if re.search(r"login(_via|\.php|/)?", final.split("//", 1)[-1].split("/", 1)[-1]):
+        return "login", ""
+    txt = r.text
+    logged_in = (
+        f'"USER_ID":"{uid}"' in txt
+        or f"c_user={uid}" in txt
+        or f"view_as_entry_list" in txt and uid in txt
+        or bool(_extract(txt, _DTSG_PATTERNS))
+    )
+    if logged_in:
+        return "ok", txt
+    if "loginform" in txt or "login_form" in txt:
+        return "login", ""
+    # bố cục lạ: vẫn thử tiếp các bước sau
+    return "ok", txt
+
+
+def _tokens_from_html(html_text: str):
+    return _extract(html_text, _DTSG_PATTERNS), _extract(html_text, _LSD_PATTERNS)
+
+
+def _tokens(s: requests.Session):
+    """Lấy fb_dtsg + lsd từ trang chủ (fallback nếu probe chưa có)."""
+    for url in ("https://www.facebook.com/", "https://www.facebook.com/me/"):
+        try:
+            r = s.get(url, timeout=25)
+            if r.status_code == 200 and "login" not in str(r.url):
+                dtsg, lsd = _tokens_from_html(r.text)
+                if dtsg:
+                    return dtsg, lsd
+        except Exception:
+            continue
+    return "", ""
 
 
 _VIEWER_UID = ""
@@ -147,6 +207,8 @@ def _thread_node(node: dict, tid: str) -> dict:
 
 def _graphql_threads(s: requests.Session, dtsg: str, lsd: str):
     """Thử các doc_id để lấy list box."""
+    if not dtsg:
+        return []
     variables = {
         "limit": 50, "before": None, "after": None, "tags": ["INBOX"],
         "includeDeliveryReceipts": False, "includeSeqID": False,
@@ -194,6 +256,8 @@ def _parse_html_threads(page: str):
     pats = [
         r'href="(?:https?://[^"]*)?/messages/(?:read/\?tid=|t/)(\d{6,})[^"]*"[^>]*>(.*?)</a>',
         r'"thread_fbid":"(\d{6,})"',
+        r'&quot;thread_fbid&quot;:&quot;(\d{6,})&quot;',
+        r'\\"thread_fbid\\":\\"(\d{6,})\\"',
     ]
     for pat in pats:
         for m in re.finditer(pat, page, re.S):
@@ -207,12 +271,28 @@ def _parse_html_threads(page: str):
 
 
 def _html_threads(s: requests.Session):
-    for url in ("https://mbasic.facebook.com/messages/",
-                "https://www.facebook.com/messages/t/",
-                "https://m.facebook.com/messages/"):
+    # 1) m.facebook.com với UA MOBILE — bản server-render còn trả link box
+    try:
+        s.headers.update(_headers(s.headers.get("Cookie", ""), UA_MOBILE))
+        s.headers["sec-ch-ua-mobile"] = "?1"
+        s.headers["sec-ch-ua-platform"] = '"Android"'
+        r = s.get("https://m.facebook.com/messages/", timeout=20)
+        if r.status_code == 200 and "login" not in str(r.url):
+            boxes = _parse_html_threads(r.text)
+            if boxes:
+                return boxes
+    except Exception:
+        pass
+    finally:
+        # trả UA desktop như ban đầu
+        s.headers.update(_headers(s.headers.get("Cookie", ""), UA_DESKTOP))
+        s.headers["sec-ch-ua-mobile"] = "?0"
+        s.headers["sec-ch-ua-platform"] = '"Windows"'
+    # 2) www messages (dữ liệu JSON nhúng)
+    for url in ("https://www.facebook.com/messages/t/",):
         try:
             r = s.get(url, timeout=20)
-            if r.status_code != 200:
+            if r.status_code != 200 or "login" in str(r.url):
                 continue
             boxes = _parse_html_threads(r.text)
             if boxes:
@@ -223,26 +303,40 @@ def _html_threads(s: requests.Session):
 
 
 def get_info(cookie: str) -> dict:
-    """Trả về {uid, name, boxes, count, note}."""
+    """Trả về {uid, name, boxes, count, note} hoặc raise ValueError khi cookie chết."""
     if not cookie or "c_user=" not in cookie:
         raise ValueError("Cookie không hợp lệ (thiếu c_user)")
     uid = get_uid(cookie)
     global _VIEWER_UID
     _VIEWER_UID = uid
     s = _session(cookie)
+
+    # ---- probe session: fail fast khi cookie chết ----
+    status, home_html = _probe_session(s, uid)
+    if status == "checkpoint":
+        raise ValueError(
+            "Tài khoản đang bị checkpoint/khoá — hãy đăng nhập web facebook.com để mở khoá rồi lấy lại cookie.")
+    if status == "login":
+        raise ValueError(
+            "Cookie ĐÃ HẾT HẠN hoặc không hợp lệ (Facebook xoá session, bắt đăng nhập lại). "
+            "Hãy lấy cookie MỚI: đăng nhập facebook.com trong trình duyệt → F12 → Application → Cookies → copy c_user + xs + datr + fr, dán lại vào đây.")
+
+    dtsg, lsd = _tokens_from_html(home_html)
+    if not dtsg:
+        dtsg, lsd = _tokens(s)
+
     note = ""
     name, boxes = "", []
     try:
         name = get_name(s, uid)
-        dtsg, lsd = _tokens(s)
         if dtsg:
             boxes = _graphql_threads(s, dtsg, lsd)
         if not boxes:
             time.sleep(0.6)
             boxes = _html_threads(s)
         if not boxes:
-            note = ("Không đọc được danh sách box (Facebook có thể đang tạm chặn hoặc cookie thiếu quyền). "
-                    "UID vẫn dùng được.")
+            note = ("Đăng nhập OK nhưng không đọc được danh sách box (inbox trống, "
+                    "Facebook tạm chặn hoặc cookie thiếu quyền Messenger). UID + tên vẫn dùng được.")
     finally:
         try:
             s.close()
