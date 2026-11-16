@@ -60,10 +60,10 @@ function setAuthMode(m) {
   $("#tabRegister").classList.toggle("active", m === "register");
   $("#authSubmit").textContent = m === "login" ? "Đăng nhập" : "Đăng ký";
 }
-$("#tabLogin").onclick = () => setAuthMode("login");
-$("#tabRegister").onclick = () => setAuthMode("register");
+($("#tabLogin")||{}).onclick = () => setAuthMode("login");
+($("#tabRegister")||{}).onclick = () => setAuthMode("register");
 
-$("#authSubmit").onclick = async () => {
+($("#authSubmit")||{}).onclick = async () => {
   const username = $("#authUser").value.trim();
   const password = $("#authPass").value;
   if (!username || !password) return toast("Nhập đủ tên và mật khẩu", "warn");
@@ -81,13 +81,13 @@ function logoutLocal() {
   if (ws) { ws.close(); ws = null; }
   show("viewLanding");
 }
-$("#navLogout").onclick = async () => { try { await api("/api/logout", { method: "POST" }); } catch (e) {} logoutLocal(); toast("Đã đăng xuất"); };
-$("#navAuth").onclick = () => show("viewAuth");
-$("#navHome").onclick = () => show("viewLanding");
-$("#navDash").onclick = () => show("viewDash");
-$("#navAdmin").onclick = () => { show("viewAdmin"); loadAdmin(); };
-$("#heroStart").onclick = () => { ME ? show("viewDash") : show("viewAuth"); };
-$("#heroRent").onclick = openRent;
+($("#navLogout")||{}).onclick = async () => { try { await api("/api/logout", { method: "POST" }); } catch (e) {} logoutLocal(); toast("Đã đăng xuất"); };
+($("#navAuth")||{}).onclick = () => show("viewAuth");
+($("#navHome")||{}).onclick = () => show("viewLanding");
+($("#navDash")||{}).onclick = () => show("viewDash");
+($("#navAdmin")||{}).onclick = () => { show("viewAdmin"); loadAdmin(); };
+($("#heroStart")||{}).onclick = () => { ME ? show("viewDash") : show("viewAuth"); };
+($("#heroRent")||{}).onclick = openRent;
 
 /* ---------------- tools rendering ---------------- */
 const ICONS = {
@@ -109,6 +109,7 @@ function toolCard(key) {
 
 function renderTools() {
   const keys = Object.keys(TOOLS);
+  if (!$("#landingTools") || !$("#dashTools")) return; // HTML cũ trong cache — không crash
   $("#landingTools").innerHTML = keys.map(toolCard).join("");
   $("#dashTools").innerHTML = keys.map(toolCard).join("");
   $$("[data-tool]").forEach((b) => b.onclick = () => openTaskModal(b.dataset.tool));
@@ -214,7 +215,7 @@ function openTaskModal(toolKey) {
   openModal("overlayTask");
 }
 
-$("#btnCreateTask").onclick = async () => {
+($("#btnCreateTask")||{}).onclick = async () => {
   const cfg = {};
   $$("#taskFields [data-f]").forEach((el) => {
     let v = el.value;
@@ -268,7 +269,7 @@ const CHECK_HINT = {
   zalo: "Zalo: mỗi dòng imei|cookie_json — hoặc tải nguyên file export (có dòng “IMEI:”).",
 };
 
-$("#btnCheck").onclick = () => {
+($("#btnCheck")||{}).onclick = () => {
   if (!ME) return show("viewAuth");
   openModal("overlayCheck");
 };
@@ -292,7 +293,7 @@ $("#checkFile").onchange = () => {
   $("#checkFile").value = "";
 };
 
-$("#btnClearCheck").onclick = () => {
+($("#btnClearCheck")||{}).onclick = () => {
   $("#checkData").value = "";
   $("#checkResult").innerHTML = "";
   $("#checkSummary").classList.add("hidden");
@@ -300,7 +301,7 @@ $("#btnClearCheck").onclick = () => {
   CHECK_ROWS = [];
 };
 
-$("#btnRunCheck").onclick = async () => {
+($("#btnRunCheck")||{}).onclick = async () => {
   const kind = $("#checkKind").value;
   const data = $("#checkData").value.trim();
   if (!data) return toast("Dán danh sách hoặc tải file .txt trước đã", "warn");
@@ -359,7 +360,7 @@ function paintCheckRows() {
   if (all.length > CHECK_SHOWN) {
     $("#checkResult").innerHTML +=
       `<button class="btn" id="btnMoreCheck" style="margin-top:6px">Xem thêm ${Math.min(300, all.length - CHECK_SHOWN)} / còn ${all.length - CHECK_SHOWN} acc</button>`;
-    $("#btnMoreCheck").onclick = () => { CHECK_SHOWN += 300; paintCheckRows(); };
+    ($("#btnMoreCheck")||{}).onclick = () => { CHECK_SHOWN += 300; paintCheckRows(); };
   }
 }
 
@@ -369,7 +370,7 @@ function copyText(i) {
   navigator.clipboard.writeText(r.input).then(() => toast("Đã copy", "success")).catch(() => toast("Không copy được", "error"));
 }
 
-$("#btnCopyLive").onclick = () => {
+($("#btnCopyLive")||{}).onclick = () => {
   const live = CHECK_ROWS.filter((r) => r.status === "live").map((r) => r.input).join("\n");
   if (!live) return;
   navigator.clipboard.writeText(live).then(() => toast(`Đã copy ${CHECK_ROWS.filter((r) => r.status === "live").length} acc LIVE`, "success")).catch(() => toast("Không copy được", "error"));
@@ -440,7 +441,7 @@ function editTask(id) {
   bindAutoGroups("#editFields");
   openModal("overlayEdit");
 }
-$("#btnSaveConfig").onclick = async () => {
+($("#btnSaveConfig")||{}).onclick = async () => {
   const cfg = {};
   $$("#editFields [data-f]").forEach((el) => {
     let v = el.value;
@@ -520,7 +521,7 @@ $("#adminUserSearch").oninput = () => {
 };
 async function adminStop(id) { try { await api(`/api/admin/tasks/${id}/stop`, { method: "POST" }); toast("Đã đóng task từ xa", "warn"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
 async function adminDel(id) { if (!confirm("Xoá task?")) return; try { await api(`/api/admin/tasks/${id}`, { method: "DELETE" }); toast("Đã xoá", "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
-$("#btnBroadcast").onclick = async () => {
+($("#btnBroadcast")||{}).onclick = async () => {
   // mở form soạn thông báo giữa màn hình, nạp nội dung đang hiện (nếu có)
   try {
     const a = await api("/api/announcement");
@@ -528,7 +529,7 @@ $("#btnBroadcast").onclick = async () => {
   } catch (e) { $("#annText").value = ""; }
   openModal("overlayBroadcast");
 };
-$("#btnSendAnn").onclick = async () => {
+($("#btnSendAnn")||{}).onclick = async () => {
   const text = $("#annText").value.trim();
   if (!text) return toast("Nhập nội dung thông báo trước đã", "warn");
   try {
@@ -538,7 +539,7 @@ $("#btnSendAnn").onclick = async () => {
     showAnnouncementModal(row);
   } catch (e) { toast(e.message, "error"); }
 };
-$("#btnClearAnn").onclick = async () => {
+($("#btnClearAnn")||{}).onclick = async () => {
   if (!confirm("Gỡ thông báo khỏi web?")) return;
   try {
     await api("/api/admin/announcement", { method: "DELETE" });
@@ -599,21 +600,28 @@ async function bootUser(retry = 0) {
     toast(e.message || "Không kết nối được máy chủ", "error");
     return;
   }
-  $("#dashHello").textContent = `Xin chào ${ME.username} · ${ME.access_label}`;
-  $("#accessTag").textContent = ME.access_label;
-  $("#accessTag").className = "tag " + (ME.access ? "ok" : "no");
-  $("#accessNotice").classList.toggle("hidden", ME.access || ME.is_admin);
+  try {
+    const dh = $("#dashHello"); if (dh) dh.textContent = `Xin chào ${ME.username} · ${ME.access_label}`;
+    const at = $("#accessTag"); if (at) { at.textContent = ME.access_label; at.className = "tag " + (ME.access ? "ok" : "no"); }
+    const an = $("#accessNotice"); if (an) an.classList.toggle("hidden", ME.access || ME.is_admin);
+  } catch (e) {}
   show("viewDash");
   await refreshTasks();
   connectWS();
 }
 
 async function boot() {
-  try { TOOLS = await api("/api/tools"); } catch (e) { TOOLS = {}; }
+  try { TOOLS = await api("/api/tools"); } catch (e) {
+    TOOLS = {};   // server chưa tỉnh (Render cold start) — thử lại nền, tool tự hiện khi có
+    [2500, 6000, 12000].forEach((ms) => setTimeout(async () => {
+      if (Object.keys(TOOLS).length) return;
+      try { TOOLS = await api("/api/tools"); renderTools(); } catch (e2) {}
+    }, ms));
+  }
   renderTools();
   if (TOKEN) {
     try { ME = await api("/api/me"); await bootUser(); }
-    catch (e) { logoutLocal(); }
+    catch (e) { if (e && e.status === 401) logoutLocal(); } // lỗi khác: giữ token, không đá user
   } else {
     show("viewLanding");
   }
@@ -624,6 +632,7 @@ async function boot() {
 const ANN_OFF_KEY = "pcAnnOff", ANN_SEEN_KEY = "pcAnnSeen";
 function showAnnouncementModal(a) {
   if (!a || !a.text) return;
+  if (!$("#overlayAnn") || !$("#annTextShow")) return; // HTML cũ trong cache — không crash
   if (localStorage.getItem(ANN_OFF_KEY) === "1") return;
   const age = Date.now() / 1000 - (a.created_at || 0);
   if (age >= 86400 && String(localStorage.getItem(ANN_SEEN_KEY)) === String(a.id)) return;
@@ -652,11 +661,11 @@ async function checkAnnouncement() {
     if (a && a.text) showAnnouncementModal(a);
   } catch (e) {}
 }
-$("#btnAnnClose").onclick = () => {
+($("#btnAnnClose")||{}).onclick = () => {
   try { localStorage.setItem(ANN_SEEN_KEY, $("#overlayAnn").dataset.annId || ""); } catch (e) {}
   hideAnnouncement();
 };
-$("#btnAnnOff").onclick = () => {
+($("#btnAnnOff")||{}).onclick = () => {
   if (!confirm("Tắt thông báo vĩnh viễn trên trình duyệt này?")) return;
   try { localStorage.setItem(ANN_OFF_KEY, "1"); } catch (e) {}
   hideAnnouncement();
@@ -794,7 +803,7 @@ function playMusic() {
     .catch(() => { hintMuted(); toast("Bấm vào trang 1 lần để bật tiếng nhạc 🔊", "info"); });
 }
 
-$("#musicToggle").onclick = () => {
+($("#musicToggle")||{}).onclick = () => {
   if (!bgAudio) return;
   if (Date.now() - lastUnmuteAt < 500) return;
   if (bgAudio.paused) {
@@ -825,8 +834,8 @@ if (bgAudio) {
 /* ---------------- Facebook UID & Box ---------------- */
 let fbBoxes = [];
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-$("#btnFbInfo").onclick = () => { openModal("overlayFbInfo"); };
-$("#btnFbFetch").onclick = async () => {
+($("#btnFbInfo")||{}).onclick = () => { openModal("overlayFbInfo"); };
+($("#btnFbFetch")||{}).onclick = async () => {
   const cookie = $("#fbCookie").value.trim();
   if (!cookie) return toast("Dán cookie Facebook trước đã", "warn");
   const btn = $("#btnFbFetch"); btn.disabled = true; btn.textContent = "Đang lấy...";
@@ -866,7 +875,7 @@ $("#btnFbFetch").onclick = async () => {
     toast(e.message, "error");
   } finally { btn.disabled = false; btn.textContent = "Lấy thông tin"; }
 };
-$("#btnFbCopyAll").onclick = () => {
+($("#btnFbCopyAll")||{}).onclick = () => {
   const ids = fbBoxes.map((b) => b.id).join("\n");
   navigator.clipboard?.writeText(ids);
   toast("Đã copy " + fbBoxes.length + " ID box", "success");
