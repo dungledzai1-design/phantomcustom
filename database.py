@@ -146,6 +146,15 @@ def touch_login(uid):
     update_user(uid, last_login=time.time())
 
 
+def delete_user(uid):
+    """Xoá vĩnh viễn user + toàn bộ phiên đăng nhập + task của user."""
+    with _lock, _conn() as c:
+        c.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM tasks WHERE user_id=?", (uid,))
+        c.execute("DELETE FROM users WHERE id=?", (uid,))
+    return get_user(uid) is None
+
+
 # ---------------- Sessions ----------------
 def create_session(user_id):
     token = secrets.token_urlsafe(32)

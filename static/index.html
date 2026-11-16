@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>PhantomCustom — by Lê Tiến Dũng</title>
-<link rel="stylesheet" href="/static/style.css?v=20261116e"/>
+<link rel="stylesheet" href="/static/style.css?v=20261116f"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
@@ -161,10 +161,12 @@
     <button class="btn primary" id="btnBroadcast">📢 Phát thông báo</button>
   </div>
 
-  <div class="section-title"><h2 style="font-size:17px">Người dùng</h2><span class="sub" id="adminUserCount"></span></div>
+  <div class="section-title"><h2 style="font-size:17px">Người dùng</h2><span class="sub" id="adminUserCount"></span>
+    <input id="adminUserSearch" type="text" placeholder="🔎 Tìm theo tên hoặc ID..." style="margin-left:auto;max-width:220px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;color:var(--fg);padding:8px 12px;font-size:12px;outline:none"/>
+  </div>
   <div class="card" style="padding:6px 14px;overflow:auto"><div class="table-wrap">
     <table class="table">
-      <thead><tr><th>ID</th><th>Tên</th><th>Quyền</th><th>Task</th><th>Đăng nhập cuối</th><th>Hành động</th></tr></thead>
+      <thead><tr><th>ID</th><th>Tên</th><th>Quyền</th><th>Ngày đăng ký</th><th>Task</th><th>Đăng nhập cuối</th><th>Hành động</th></tr></thead>
       <tbody id="adminUsers"></tbody>
     </table></div>
   </div>
@@ -317,6 +319,6 @@
   <source src="/static/music.mp3" type="audio/mpeg"/>
 </audio>
 
-<script src="/static/app.js?v=20261116e"></script>
+<script src="/static/app.js?v=20261116f"></script>
 </body>
 </html>

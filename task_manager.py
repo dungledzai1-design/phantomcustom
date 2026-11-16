@@ -262,6 +262,13 @@ class TaskManager:
             self.stop(i)
         return len(ids)
 
+    def delete_all_user(self, user_id):
+        """Dừng + xoá toàn bộ task của user (trên RAM và trong DB) — dùng khi xoá user."""
+        self.stop_all_user(user_id)
+        for t in self.list_for_user(user_id):
+            self.delete(t["id"])
+        return True
+
     def resume_persisted(self):
         """On startup, resume tasks that were running/paused before restart."""
         rows = db.list_tasks()

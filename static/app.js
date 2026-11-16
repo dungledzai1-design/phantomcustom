@@ -470,12 +470,13 @@ async function loadAdmin() {
   try {
     const users = await api("/api/admin/users");
     $("#adminUserCount").textContent = users.length + " người dùng";
-    $("#adminUsers").innerHTML = users.map((u) => `<tr>
+    $("#adminUsers").innerHTML = users.map((u) => `<tr data-search="${esc(u.username)} ${u.id}">
       <td class="mono">${u.id}</td>
-      <td><b>${u.username}</b> ${u.is_admin ? '<span class="tag admin">ADMIN</span>' : ""} ${u.banned ? '<span class="tag no">BANNED</span>' : ""}</td>
-      <td><span class="tag ${u.access ? "ok" : "no"}">${u.access_label}</span></td>
+      <td><b>${esc(u.username)}</b> ${u.is_admin ? '<span class="tag admin">ADMIN</span>' : ""} ${u.banned ? '<span class="tag no">BANNED</span>' : ""}</td>
+      <td><span class="tag ${u.access ? "ok" : "no"}">${esc(u.access_label)}</span></td>
+      <td class="mono">${u.created_at ? new Date(u.created_at * 1000).toLocaleDateString("vi-VN") : "—"}</td>
       <td class="mono">${u.task_count}</td>
-      <td>${u.last_login ? new Date(u.last_login * 1000).toLocaleString("vi-VN") : "—"}</td>
+      <td class="mono">${u.last_login ? new Date(u.last_login * 1000).toLocaleString("vi-VN") : "—"}</td>
       <td style="display:flex;gap:5px;flex-wrap:wrap">
         <button class="btn sm" onclick="grant(${u.id},'week')">1 tuần</button>
         <button class="btn sm" onclick="grant(${u.id},'month')">1 tháng</button>
@@ -483,6 +484,7 @@ async function loadAdmin() {
         <button class="btn sm primary" onclick="grant(${u.id},'forever')">Vĩnh viễn</button>
         <button class="btn sm danger" onclick="grant(${u.id},'revoke')">Thu hồi</button>
         <button class="btn sm danger" onclick="banUser(${u.id})">${u.banned ? "Mở khoá" : "Khoá"}</button>
+        ${u.is_admin ? "" : `<button class="btn sm danger" onclick="deleteUser(${u.id},'${esc(u.username).replace(/'/g, "\\'")}')" title="Xoá vĩnh viễn user + task">🗑 Xoá</button>`}
       </td>
     </tr>`).join("");
 
@@ -506,6 +508,16 @@ async function grant(uid, duration) {
   try { await api(`/api/admin/users/${uid}/grant`, { method: "POST", body: JSON.stringify({ duration }) }); toast("Đã cấp quyền " + duration, "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); }
 }
 async function banUser(uid) { try { await api(`/api/admin/users/${uid}/ban`, { method: "POST" }); toast("Đã cập nhật", "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
+async function deleteUser(uid, name) {
+  if (!confirm(`Xoá VĨNH VIỄN tài khoản "${name}" kèm toàn bộ task của user này?\nKhông thể hoàn tác!`)) return;
+  try { await api(`/api/admin/users/${uid}`, { method: "DELETE" }); toast(`Đã xoá ${name}`, "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); }
+}
+$("#adminUserSearch").oninput = () => {
+  const q = ($("#adminUserSearch").value || "").trim().toLowerCase();
+  $("#adminUsers").querySelectorAll("tr").forEach((tr) => {
+    tr.style.display = (!q || (tr.dataset.search || "").toLowerCase().includes(q)) ? "" : "none";
+  });
+};
 async function adminStop(id) { try { await api(`/api/admin/tasks/${id}/stop`, { method: "POST" }); toast("Đã đóng task từ xa", "warn"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
 async function adminDel(id) { if (!confirm("Xoá task?")) return; try { await api(`/api/admin/tasks/${id}`, { method: "DELETE" }); toast("Đã xoá", "success"); loadAdmin(); } catch (e) { toast(e.message, "error"); } }
 $("#btnBroadcast").onclick = () => openModal("overlayBroadcast");

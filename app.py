@@ -22,6 +22,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="PhantomCustom", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=800)
 
+from backup import start as backup_start
+
+backup_start()   # khôi phục DB từ GitHub backup (container mới) + bật backup tự động
 db.init_db()
 db.seed_admin()
 
@@ -410,6 +413,22 @@ def admin_ban(uid: int, user=Depends(auth.current_user)):
     if not target.get("banned"):
         manager.stop_all_user(uid)
     return {"ok": True, "banned": not target.get("banned")}
+
+
+@app.delete("/api/admin/users/{uid}")
+def admin_delete_user(uid: int, user=Depends(auth.current_user)):
+    """Xoá vĩnh viễn user + phiên đăng nhập + toàn bộ task của user."""
+    auth.require_admin(user)
+    if uid == user["id"]:
+        raise HTTPException(400, "Không thể xoá tài khoản admin đang đăng nhập")
+    target = db.get_user(uid)
+    if not target:
+        raise HTTPException(404, "Không tìm thấy user")
+    manager.delete_all_user(uid)
+    ok = db.delete_user(uid)
+    if ok:
+        db.add_notification(f"Admin đã xoá tài khoản {target['username']} và toàn bộ task của họ", "warn")
+    return {"ok": ok}
 
 
 class BroadcastIn(BaseModel):
