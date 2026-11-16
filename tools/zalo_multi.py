@@ -39,11 +39,14 @@ def _cookies(raw):
 
 
 def _extract_gid(link):
+    s = str(link or "").strip()
+    # chấp nhận dòng "UID — Tên nhóm" / "UID - Tên" / "UID | Tên" (web điền kèm tên)
+    s = re.split(r"\s+[—|]\s+|\s+-\s+", s, maxsplit=1)[0].strip()
     for pat in (r"zalo\.me/g/([a-zA-Z0-9_-]+)", r"/g/([a-zA-Z0-9_-]+)"):
-        m = re.search(pat, link)
+        m = re.search(pat, s)
         if m:
             return m.group(1)
-    return link if link and not link.startswith("http") else None
+    return s if s and not s.startswith("http") else None
 
 
 def _images(folder):

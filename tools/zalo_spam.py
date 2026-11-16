@@ -30,12 +30,15 @@ def _parse_list(raw):
 
 
 def _extract_group_id(link):
+    s = str(link or "").strip()
+    # chấp nhận dòng "UID — Tên nhóm" / "UID - Tên" / "UID | Tên" (web điền kèm tên)
+    s = re.split(r"\s+[—|]\s+|\s+-\s+", s, maxsplit=1)[0].strip()
     for pat in (r"zalo\.me/g/([a-zA-Z0-9_-]+)", r"zalo\.me/pc/g/([a-zA-Z0-9_-]+)", r"/g/([a-zA-Z0-9_-]+)"):
-        m = re.search(pat, link)
+        m = re.search(pat, s)
         if m:
             return m.group(1)
-    if link and not link.startswith("http"):
-        return link
+    if s and not s.startswith("http"):
+        return s
     return None
 
 

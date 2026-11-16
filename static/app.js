@@ -128,7 +128,7 @@ const F = {
   imei: { label: "IMEI (bắt buộc)", type: "text", ph: "b84aaf8f3e411c94", hint: "Dán IMEI của acc. Có thể để trống nếu file cookie .txt có sẵn dòng IMEI — web tự đọc." },
   cookies: { label: "Cookie / Session (bắt buộc · JSON hoặc chuỗi)", type: "textarea", ph: "{\"zpsid\":\"...\",\"zpw_sek\":\"...\"}\nhoặc c_user=...; xs=...", hint: "Dán nguyên file cookie .txt (có dòng Tên/IMEI/COOKIE JSON) hoặc chỉ khối JSON — web tự tách. Cookie die → web báo lỗi ngay khi tạo task." },
   cookie: { label: "Cookie Facebook", type: "textarea", ph: "c_user=...; xs=..." },
-  groups: { label: "Group ID / link Zalo (để trống = tự đọc toàn bộ nhóm đang tham gia)", type: "textarea", ph: "Để trống → web tự lấy hết nhóm trong acc\nHoặc: 123456789 | https://zalo.me/g/xxx" },
+  groups: { label: "Group ID / link Zalo (để trống = tự đọc toàn bộ nhóm đang tham gia)", type: "textarea", ph: "Để trống → web tự lấy hết nhóm trong acc\nHoặc: 123456789 | https://zalo.me/g/xxx", hint: "Mỗi dòng 1 nhóm: chỉ UID hoặc 'UID — Tên nhóm'. Bấm Tự lấy box → web điền kèm tên nhóm để bạn dễ phân biệt; khi chạy web chỉ lấy phần UID, tên không gửi đi." },
   threads: { label: "Box / thread ID Messenger (mỗi dòng 1)", type: "textarea", ph: "1000123456789" },
   thread: { label: "Box / thread ID", type: "text", ph: "1000123456789" },
   members: { label: "Member UID để tag (mỗi dòng 1, có thể uid:tên)", type: "textarea", ph: "10001:Nguyễn A\n10002:Trần B" },
@@ -183,9 +183,11 @@ function bindAutoGroups(scope) {
           method: "POST",
           body: JSON.stringify({ imei, cookies: ck }),
         });
-        const list = r.groups || [];
-        if (gEl) gEl.value = list.join("\n");
-        toast(`Đã lấy ${r.count} nhóm${r.name ? " · " + r.name : ""}`, "success");
+        const boxes = r.boxes || (r.groups || []).map((id) => ({ id, name: "" }));
+        // điền "UID — Tên nhóm" như mess: UID đứng trước để tool tự đọc, tên để phân biệt
+        if (gEl) gEl.value = boxes.map((b) => (b.name ? `${b.id} — ${b.name}` : b.id)).join("\n");
+        const named = boxes.filter((b) => b.name).length;
+        toast(`Đã lấy ${boxes.length} nhóm${named === boxes.length ? " (kèm tên)" : ` · ${named}/${boxes.length} có tên`}${r.name ? " · " + r.name : ""}`, "success");
       } catch (e) {
         toast(e.message, "error");
       } finally {

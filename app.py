@@ -182,7 +182,7 @@ async def zalo_groups(body: ZaloGroupsIn, user=Depends(auth.current_user)):
     """Đăng nhập bằng IMEI + session cookie và trả về toàn bộ nhóm đang tham gia."""
     from tools.zalo_session import (
         login as zalo_login,
-        auto_groups,
+        auto_groups_detail,
         account_info,
         ZaloSessionError,
     )
@@ -196,13 +196,14 @@ async def zalo_groups(body: ZaloGroupsIn, user=Depends(auth.current_user)):
 
     def _work():
         bot = zalo_login(imei, cookies)
-        groups = auto_groups(bot)
+        boxes = auto_groups_detail(bot)   # [{id, name}] — UID kèm tên nhóm như mess
         try:
             info = account_info(bot) or {}
         except Exception:
             info = {}
         return {
-            "groups": groups,
+            "boxes": boxes,
+            "groups": [b["id"] for b in boxes],   # giữ tương thích bản cũ
             "name": info.get("name") or "",
             "uid": info.get("uid") or "",
             "phone": info.get("phone") or "",
@@ -216,7 +217,7 @@ async def zalo_groups(body: ZaloGroupsIn, user=Depends(auth.current_user)):
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Không đọc được nhóm: {e}")
 
-    return {"ok": True, "count": len(res["groups"]), **res}
+    return {"ok": True, "count": len(res["boxes"]), **res}
 
 
 # ---------------- checker: live/die hàng loạt ----------------

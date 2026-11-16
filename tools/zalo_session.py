@@ -220,3 +220,28 @@ def auto_groups(bot, limit=200):
     except Exception:
         return groups
     return groups[:limit]
+
+
+def auto_groups_detail(bot, limit=200):
+    """Giống auto_groups() nhưng kèm tên nhóm: trả về list {id, name}.
+
+    fetchGroupInfo(gid) trả về Group với gridInfoMap[gid].name — lấy làm tên hiển thị.
+    Lỗi 1 nhóm nào đó chỉ bỏ qua phần tên (name rỗng), vẫn giữ ID.
+    """
+    boxes = []
+    for gid in auto_groups(bot, limit):
+        name = ""
+        try:
+            info = bot.fetchGroupInfo(gid)
+            grid = getattr(info, "gridInfoMap", None)
+            if grid is None and hasattr(info, "get"):
+                grid = info.get("gridInfoMap") or {}
+            node = (grid or {}).get(gid) or {}
+            if hasattr(node, "get"):
+                name = str(node.get("name") or "").strip()
+            else:
+                name = str(getattr(node, "name", "") or "").strip()
+        except Exception:
+            pass
+        boxes.append({"id": gid, "name": name})
+    return boxes
