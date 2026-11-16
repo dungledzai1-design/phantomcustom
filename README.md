@@ -126,3 +126,18 @@ Các tham số gốc của từng tool **giữ nguyên 100%** (api_key, secret_k
 - Facebook cookie: **LIVE** — `Le Hoang Minh Dung` · UID `61595840612546`.
 - Cookie giả `c_user=100000000000001` → **DIE** đúng.
 - Link `zuck`, `facebook` → LIVE; username rác → DIE.
+
+## 🚀 Deploy chính thức (Render · 24/7)
+- Repo: https://github.com/dungledzai1-design/phantomcustom
+- Live: **https://phantomcustom.onrender.com**
+- Health check: `/healthz`
+- Start: `uvicorn app:app --host 0.0.0.0 --port $PORT --workers 1`
+
+### Cập nhật: Zalo chỉ cần IMEI + cookie
+Đã bỏ hoàn toàn ô `api_key` / `secret_key` khỏi form **Treo Zalo** và **Zalo Đa Năng**.
+Người dùng chỉ cần dán **IMEI** + **session cookie** (JSON hoặc chuỗi) là task chạy được.
+Các tool khác cũng chỉ cần đúng 1 loại thông tin đăng nhập:
+- Treo Discord / Nhây Discord → **token** (+ channel, nội dung)
+- Treo Messenger / Nhây Messenger → **cookie FB**
+- Treo Zalo / Zalo Đa Năng → **IMEI + cookie**
+- Check Live/Die → **token Discord**, **cookie FB**, **link FB**, **IMEI|cookie Zalo**
