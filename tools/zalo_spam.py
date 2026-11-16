@@ -1,8 +1,9 @@
 """Zalo treo tool (port of 1.py) — spam text / ảnh / video vào nhiều nhóm.
 
 Config keys:
-  api_key, secret_key, imei, cookies (JSON string or dict), groups (list/text),
-  message, delay, ttl, colors (list of 1..4), media_type (none|image|video),
+  imei (bắt buộc), cookies (JSON string or dict — bắt buộc), groups (list/text,
+  để trống = tự đọc toàn bộ nhóm đang tham gia), message, delay, ttl,
+  colors (list of 1..4), media_type (none|image|video),
   media_source (folder path or newline list of urls)
 """
 import time
@@ -12,10 +13,12 @@ import os
 import re
 
 try:
-    from zlapi import ZaloAPI, ThreadType, Message, Mention, MultiMsgStyle, MessageStyle
+    from zlapi import ThreadType, Message, Mention, MultiMsgStyle, MessageStyle
     ZLAPI_OK = True
 except Exception:
     ZLAPI_OK = False
+
+from .zalo_session import login as zalo_login, auto_groups, ZaloSessionError
 
 COLOR_MAP = {1: "#db342e", 2: "#f27806", 3: "#f7b503", 4: "#15a85f"}
 
@@ -57,10 +60,8 @@ def run(config, ctx):
     if not ZLAPI_OK:
         ctx.log("Thiếu thư viện zlapi — thêm 'zlapi' vào requirements để chạy tool Zalo.")
         return
-    api_key = str(config.get("api_key", "")).strip()
-    secret_key = str(config.get("secret_key", "")).strip()
     imei = str(config.get("imei", "")).strip()
-    cookies = _cookies(config.get("cookies"))
+    raw_cookies = config.get("cookies")
     groups = [_extract_group_id(g) for g in _parse_list(config.get("groups"))]
     groups = [g for g in groups if g]
     message = config.get("message", "")
@@ -73,17 +74,29 @@ def run(config, ctx):
     media_type = config.get("media_type", "none")
     media_source = config.get("media_source", "")
 
-    if not imei or not cookies or not groups:
-        ctx.log("Thiếu IMEI / cookies / group ID")
+    if not imei and not raw_cookies:
+        ctx.log("Thiếu IMEI và cookie — dán IMEI + session cookie Zalo là chạy.")
         return
 
     try:
-        bot = ZaloAPI(api_key, secret_key, imei, cookies)
+        bot = zalo_login(imei, raw_cookies)
+    except ZaloSessionError as e:
+        ctx.log(f"❌ {e}")
+        return
     except Exception as e:
-        ctx.log(f"Không khởi tạo được ZaloAPI: {e}")
+        ctx.log(f"❌ Không đăng nhập được Zalo: {e}")
         return
 
-    ctx.log(f"Đã khởi tạo bot, treo {len(groups)} nhóm")
+    # Không nhập link box → tự đọc toàn bộ nhóm đang tham gia
+    if not groups:
+        ctx.log("🔎 Chưa nhập box — đang tự đọc danh sách nhóm từ tài khoản...")
+        groups = auto_groups(bot)
+        if not groups:
+            ctx.log("❌ Tài khoản không có nhóm nào (hoặc cookie không đủ quyền đọc nhóm).")
+            return
+        ctx.log(f"✅ Tự phát hiện {len(groups)} nhóm — bắt đầu treo.")
+
+    ctx.log(f"Đã đăng nhập bằng IMEI + cookie, treo {len(groups)} nhóm")
     color_index = 0
     last_video = -1
     while not ctx.stopped:

@@ -276,14 +276,8 @@ def _parse_zalo_blocks(raw):
 
 
 def _zalo_login(imei, cookie):
-    from zlapi import ZaloAPI  # import trong hàm để không chặn app khởi động
-    ck = cookie
-    if isinstance(ck, str):
-        try:
-            ck = json.loads(ck)
-        except Exception:
-            ck = dict(re.findall(r"([\w\-]+)=([^;]+)", ck))
-    return ZaloAPI("", "", imei, ck)
+    from .zalo_session import login as zalo_login  # chỉ cần IMEI + cookie
+    return zalo_login(imei, cookie)
 
 
 def check_zalo(imei, cookie):
@@ -296,11 +290,11 @@ def check_zalo(imei, cookie):
     def _work():
         try:
             bot = _zalo_login(imei, cookie)
-            info = bot.fetchAccountInfo() or {}
-            prof = info.get("profile", {}) if isinstance(info, dict) else {}
-            box["name"] = prof.get("displayName") or prof.get("zaloName") or ""
-            box["id"] = prof.get("userId", "")
-            box["phone"] = prof.get("phoneNumber", "")
+            from .zalo_session import account_info
+            info = account_info(bot)
+            box["name"] = info.get("name", "")
+            box["id"] = info.get("uid", "")
+            box["phone"] = info.get("phone", "")
             box["ok"] = True
         except Exception as e:
             box["err"] = f"{type(e).__name__}: {e}"

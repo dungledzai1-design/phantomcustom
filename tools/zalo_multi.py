@@ -9,10 +9,12 @@ import random
 import re
 
 try:
-    from zlapi import ZaloAPI, ThreadType, Message, Mention, MultiMention
+    from zlapi import ThreadType, Message, Mention, MultiMention
     ZLAPI_OK = True
 except Exception:
     ZLAPI_OK = False
+
+from .zalo_session import login as zalo_login, auto_groups, ZaloSessionError
 
 try:
     from gtts import gTTS
@@ -56,10 +58,8 @@ class ZaloMulti:
     def __init__(self, config, ctx):
         self.cfg = config
         self.ctx = ctx
-        self.api_key = str(config.get("api_key", ""))
-        self.secret_key = str(config.get("secret_key", ""))
         self.imei = str(config.get("imei", ""))
-        self.cookies = _cookies(config.get("cookies"))
+        self.raw_cookies = config.get("cookies")
         self.mode = config.get("mode", "nhaytag")
         self.groups = [g for g in (_extract_gid(x) for x in _parse_list(config.get("groups"))) if g]
         self.message = config.get("message", "")
@@ -76,11 +76,17 @@ class ZaloMulti:
         self.bot = None
 
     def connect(self):
+        if not self.imei and not self.raw_cookies:
+            self.ctx.log("Thiếu IMEI và cookie — dán IMEI + session cookie Zalo là chạy.")
+            return False
         try:
-            self.bot = ZaloAPI(self.api_key, self.secret_key, self.imei, self.cookies)
+            self.bot = zalo_login(self.imei, self.raw_cookies)
             return True
+        except ZaloSessionError as e:
+            self.ctx.log(f"❌ {e}")
+            return False
         except Exception as e:
-            self.ctx.log(f"Không khởi tạo ZaloAPI: {e}")
+            self.ctx.log(f"❌ Không đăng nhập được Zalo: {e}")
             return False
 
     def _members_for(self, gid):
@@ -102,8 +108,12 @@ class ZaloMulti:
             self._join()
             return
         if not self.groups:
-            self.ctx.log("Chưa có group ID")
-            return
+            self.ctx.log("🔎 Chưa nhập box — đang tự đọc danh sách nhóm từ tài khoản...")
+            self.groups = auto_groups(self.bot)
+            if not self.groups:
+                self.ctx.log("❌ Tài khoản không có nhóm nào để chạy.")
+                return
+            self.ctx.log(f"✅ Tự phát hiện {len(self.groups)} nhóm — bắt đầu mode {self.mode}.")
         for gid in self.groups:
             if self.ctx.stopped:
                 break

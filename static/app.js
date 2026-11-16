@@ -125,10 +125,10 @@ const F = {
   delay: { label: "Delay (giây)", type: "number", ph: "3", def: 3 },
   api_key: { label: "API Key Zalo", type: "text", ph: "api_key" },
   secret_key: { label: "Secret Key Zalo", type: "text", ph: "secret_key" },
-  imei: { label: "IMEI", type: "text", ph: "imei..." },
-  cookies: { label: "Cookie / Session cookies (mỗi dòng 1 cookie, hoặc JSON)", type: "textarea", ph: "c_user=...; xs=...\nhoặc JSON session" },
+  imei: { label: "IMEI (bắt buộc)", type: "text", ph: "b84aaf8f3e411c94" },
+  cookies: { label: "Cookie / Session (bắt buộc · JSON hoặc chuỗi)", type: "textarea", ph: "{\"zpsid\":\"...\",\"zpw_sek\":\"...\"}\nhoặc c_user=...; xs=..." },
   cookie: { label: "Cookie Facebook", type: "textarea", ph: "c_user=...; xs=..." },
-  groups: { label: "Group ID / link Zalo (mỗi dòng 1)", type: "textarea", ph: "123456789\nhttps://zalo.me/g/xxx" },
+  groups: { label: "Group ID / link Zalo (để trống = tự đọc toàn bộ nhóm đang tham gia)", type: "textarea", ph: "Để trống → web tự lấy hết nhóm trong acc\nHoặc: 123456789 | https://zalo.me/g/xxx" },
   threads: { label: "Box / thread ID Messenger (mỗi dòng 1)", type: "textarea", ph: "1000123456789" },
   thread: { label: "Box / thread ID", type: "text", ph: "1000123456789" },
   members: { label: "Member UID để tag (mỗi dòng 1, có thể uid:tên)", type: "textarea", ph: "10001:Nguyễn A\n10002:Trần B" },
@@ -171,17 +171,7 @@ function openTaskModal(toolKey) {
   $("#taskModalDesc").textContent = t.desc;
   $("#taskFields").innerHTML =
     `<div class="field"><label>Tên task</label><input data-f="__name" value="${t.name}" placeholder="Tên gợi nhớ"/></div>` +
-    t.fields.map((f) => fieldHTML(f)).join("") +
-    `<div class="anti-die">
-      <div class="anti-head">🛡 Cấu trúc treo trụ · chống die acc <span class="pill">áp dụng mọi tool</span></div>
-      <p class="hint" style="margin:0 0 10px">Giữ nguyên toàn bộ tham số gốc của tool. Phần này thêm lớp bảo vệ: delay ngẫu nhiên, nghỉ định kỳ, tự dừng khi gửi quá nhiều.</p>
-      <div class="anti-grid">
-        <div class="field"><label>Jitter delay ngẫu nhiên (%)</label><input data-f="jitter" type="number" min="0" max="90" value="25"/></div>
-        <div class="field"><label>Nghỉ sau mỗi N lần gửi</label><input data-f="rest_every" type="number" min="0" value="40"/></div>
-        <div class="field"><label>Thời gian nghỉ (giây)</label><input data-f="rest_time" type="number" min="0" value="30"/></div>
-        <div class="field"><label>Tự dừng sau N tin (0 = không)</label><input data-f="max_sent" type="number" min="0" value="0"/></div>
-      </div>
-    </div>`;
+    t.fields.map((f) => fieldHTML(f)).join("");
   bindImporters("#taskFields");
   openModal("overlayTask");
 }
@@ -612,32 +602,116 @@ function setMusicUI(playing) {
   if (eq) eq.classList.toggle("hidden", !playing);
   if (dock) dock.classList.toggle("playing", playing);
 }
-function playMusic() {
-  const audio = $("#bgMusic");
-  if (!audio) return;
-  audio.volume = 0.45;
-  return audio.play().then(() => {
-    setMusicUI(true);
-    toast("🎵 10 ngàn năm — h.ngocday~", "success");
+
+const bgAudio = $("#bgMusic");
+let musicWanted = true;
+try { musicWanted = sessionStorage.getItem("pc_music") !== "0"; } catch (e) {}
+let lastUnmuteAt = 0;
+let musicRetry = 0;
+let userUnmuted = false;
+
+function markMusicState(on) { try { sessionStorage.setItem("pc_music", on ? "1" : "0"); } catch (e) {} }
+function markPlaying() {
+  setMusicUI(true);
+  markMusicState(true);
+  const dock = $("#musicDock");
+  if (dock) dock.classList.remove("muted-hint");
+}
+function hintMuted() {
+  const dock = $("#musicDock");
+  if (dock) dock.classList.add("muted-hint");
+}
+
+/* Thử phát có tiếng trước; nếu trình duyệt chặn thì phát muted (im lặng),
+   rồi mở tiếng ngay ở thao tác đầu tiên của người dùng. */
+function attemptPlay(unmuted) {
+  if (!bgAudio || !musicWanted) return Promise.reject(new Error("off"));
+  if (userUnmuted) unmuted = true;
+  bgAudio.muted = !unmuted;
+  bgAudio.volume = 0.45;
+  const p = bgAudio.play();
+  if (!p || !p.then) return Promise.resolve();
+  return p.then(() => {
+    markPlaying();
+    if (!unmuted) { armUnmute(); hintMuted(); }
+    return true;
   }).catch(() => {
-    ambientStart(); setMusicUI(true);
-    toast("🎵 Nhạc ambient (bấm để phát 10 ngàn năm)", "info");
+    if (unmuted) return attemptPlay(false);
+    throw new Error("blocked");
   });
 }
+
+function armUnmute() {
+  const unmute = () => {
+    if (!musicWanted) return;
+    lastUnmuteAt = Date.now();
+    if (!bgAudio) return;
+    bgAudio.muted = false;
+    bgAudio.volume = 0.45;
+    const p = bgAudio.paused ? bgAudio.play() : Promise.resolve();
+    const done = () => {
+      userUnmuted = true;
+      setMusicUI(true);
+      EVENTS.forEach((ev) => document.removeEventListener(ev, unmute, true));
+      toast("🎵 10 ngàn năm — h.ngocday~", "success");
+    };
+    if (p && p.then) p.then(done).catch(() => { bgAudio.muted = true; });
+    else done();
+  };
+  EVENTS.forEach((ev) => document.addEventListener(ev, unmute, { capture: true, passive: true }));
+}
+const EVENTS = ["pointerdown", "pointermove", "keydown", "touchstart", "wheel", "scroll", "click"];
+
+/* Vòng thử lại: vài trình duyệt chặn cả muted autoplay ở lần đầu */
+function startMusicLoop() {
+  if (!bgAudio || !musicWanted) { setMusicUI(false); return; }
+  armUnmute(); // luôn sẵn sàng mở tiếng ngay khi người dùng chạm vào trang
+  attemptPlay(true).catch(() => {
+    hintMuted();
+    const tick = () => {
+      if (!musicWanted || userUnmuted || !bgAudio.paused) return;
+      if (musicRetry++ > 20) return; // ~20s rồi thôi, chờ người dùng chạm
+      attemptPlay(false).catch(() => setTimeout(tick, 1000));
+    };
+    setTimeout(tick, 300);
+  });
+}
+
+function playMusic() {
+  if (!bgAudio) return;
+  musicWanted = true;
+  musicRetry = 0;
+  attemptPlay(true).then(() => toast("🎵 10 ngàn năm — h.ngocday~", "success"))
+    .catch(() => { hintMuted(); toast("Bấm vào trang 1 lần để bật tiếng nhạc 🔊", "info"); });
+}
+
 $("#musicToggle").onclick = () => {
-  const audio = $("#bgMusic");
-  if (audio.paused) playMusic();
-  else { audio.pause(); ambientStop(); setMusicUI(false); toast("Đã tắt nhạc"); }
-};
-/* restore music state after reload */
-try {
-  if (sessionStorage.getItem("pc_music") === "1") {
-    document.addEventListener("click", function resumeOnce() {
-      if ($("#bgMusic").paused) playMusic();
-    }, { once: true });
+  if (!bgAudio) return;
+  if (Date.now() - lastUnmuteAt < 500) return;
+  if (bgAudio.paused) {
+    playMusic();
+  } else {
+    bgAudio.pause();
+    ambientStop();
+    setMusicUI(false);
+    musicWanted = false;
+    markMusicState(false);
+    toast("Đã tắt nhạc");
   }
-} catch (e) {}
-$("#bgMusic").addEventListener("play", () => { try { sessionStorage.setItem("pc_music", "1"); } catch (e) {} });
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => setTimeout(startMusicLoop, 50));
+} else {
+  setTimeout(startMusicLoop, 50);
+}
+window.addEventListener("load", () => { if (bgAudio && bgAudio.paused && musicWanted) startMusicLoop(); });
+if (bgAudio) {
+  ["loadedmetadata", "canplay", "canplaythrough"].forEach((ev) =>
+    bgAudio.addEventListener(ev, () => { if (musicWanted && bgAudio.paused) attemptPlay(false).catch(() => {}); }));
+  bgAudio.addEventListener("playing", markPlaying);
+  bgAudio.addEventListener("play", () => { markMusicState(true); setMusicUI(true); });
+}
 
 /* ---------------- Facebook UID & Box ---------------- */
 let fbBoxes = [];
@@ -688,11 +762,5 @@ $("#btnFbCopyAll").onclick = () => {
   navigator.clipboard?.writeText(ids);
   toast("Đã copy " + fbBoxes.length + " ID box", "success");
 };
-
-/* auto-start music on first user interaction */
-let musicArmed = true;
-document.addEventListener("click", function once() {
-  if (musicArmed) { musicArmed = false; $("#musicToggle").click(); }
-}, { once: true });
 
 boot();

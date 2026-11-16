@@ -21,25 +21,6 @@ class TaskContext:
         self.pause_event = threading.Event()  # set = paused
         self._log = log_cb
         self._sent = sent_cb
-        # ---- chống die acc (áp dụng cho MỌI tool) ----
-        try:
-            self.jitter = max(0.0, min(90.0, float(self.config.get("jitter") or 0)))
-        except Exception:
-            self.jitter = 0.0
-        try:
-            self.rest_every = max(0, int(self.config.get("rest_every") or 0))
-        except Exception:
-            self.rest_every = 0
-        try:
-            self.rest_time = max(0.0, float(self.config.get("rest_time") or 0))
-        except Exception:
-            self.rest_time = 0.0
-        try:
-            self.max_sent = max(0, int(self.config.get("max_sent") or 0))
-        except Exception:
-            self.max_sent = 0
-        self._waits = 0
-        self._sent_total = 0
 
     def log(self, msg):
         try:
@@ -52,27 +33,13 @@ class TaskContext:
             self._sent(n)
         except Exception:
             pass
-        self._sent_total += int(n or 0)
-        if self.max_sent and self._sent_total >= self.max_sent:
-            self.log(f"🛡 Đã gửi {self._sent_total}/{self.max_sent} tin — tự dừng để bảo vệ acc")
-            self.stop_event.set()
 
     def wait(self, seconds):
-        """Sleep that respects stop/pause. Returns False if stopped.
-
-        Tự động thêm jitter ngẫu nhiên + thời gian nghỉ bảo vệ acc.
-        """
-        import random
+        """Sleep that respects stop/pause. Returns False if stopped."""
         try:
             seconds = float(seconds)
         except Exception:
             seconds = 0.0
-        if self.jitter > 0 and seconds > 0:
-            seconds *= random.uniform(1 - self.jitter / 100.0, 1 + self.jitter / 100.0)
-        self._waits += 1
-        if self.rest_every and self.rest_time and self._waits % self.rest_every == 0:
-            self.log(f"🛡 Nghỉ bảo vệ acc {self.rest_time:.0f}s (sau {self._waits} lần)")
-            seconds += self.rest_time
         end = time.time() + max(0.0, seconds)
         while time.time() < end:
             if self.stop_event.is_set():

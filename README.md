@@ -141,3 +141,17 @@ Các tool khác cũng chỉ cần đúng 1 loại thông tin đăng nhập:
 - Treo Messenger / Nhây Messenger → **cookie FB**
 - Treo Zalo / Zalo Đa Năng → **IMEI + cookie**
 - Check Live/Die → **token Discord**, **cookie FB**, **link FB**, **IMEI|cookie Zalo**
+
+### Bản cập nhật: bỏ "cấu trúc treo trụ" + nhạc tự phát + Zalo chỉ IMEI/cookie
+1. **Đã bỏ hoàn toàn khối "Cấu trúc treo trụ · chống die acc"** trong form tạo task
+   (jitter / nghỉ định kỳ / tự dừng sau N tin) — cả UI lẫn engine `TaskContext`.
+   Form giờ chỉ còn đúng các tham số gốc của từng tool.
+2. **Nhạc tự phát khi vào web**: thử `play()` có tiếng ngay khi load; nếu trình duyệt
+   chặn autoplay thì phát muted rồi **tự mở tiếng ở thao tác chạm/click/phím/scroll đầu tiên**,
+   kèm nhắc "🔊 bấm để bật tiếng" trên dock nhạc và retry mỗi giây trong 20s.
+3. **Zalo chỉ cần IMEI + cookie** — sửa lỗi `Phone and password not set`:
+   `tools/zalo_session.py` khởi tạo `ZaloAPI(auto_login=False)`, nạp cookie vào state và
+   gọi luồng login bằng cookie (`getLoginInfo?imei=...`), không cần phone/password/api_key.
+4. **Không cần nhập link box**: để trống ô Group ID → tool tự gọi `fetchAllGroups()`
+   đọc toàn bộ nhóm đang tham gia (đã test thật: 8 nhóm) rồi treo vào tất cả.
+5. Check Live/Die Zalo cũng dùng chung session helper → hết lỗi phone/password.
